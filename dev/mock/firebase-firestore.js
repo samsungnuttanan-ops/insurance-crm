@@ -37,7 +37,12 @@ export function doc(a, name, id) {
   if (a.kind === 'col') return { kind: 'doc', name: a.name, id: name || newId() };
   return { kind: 'doc', name, id };
 }
-export function onSnapshot(ref, cb) {
+export function onSnapshot(ref, cb, onError) {
+  // ทดสอบกรณีไม่มีสิทธิ์: localStorage.mockDeny = '1'
+  if (localStorage.getItem('mockDeny') === '1') {
+    setTimeout(() => onError?.(Object.assign(new Error('denied'), { code: 'permission-denied' })), 0);
+    return () => {};
+  }
   (listeners[ref.name] ||= new Set()).add(cb);
   emit(ref.name);
   return () => listeners[ref.name].delete(cb);

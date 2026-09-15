@@ -270,19 +270,36 @@ onAuthStateChanged(auth, (user) => {
   refreshPushToken();
 });
 
-function subscribeData() {
+function subscribeData(retried = false) {
+  state.loadError = '';
+  const onError = async (err) => {
+    unsubscribers.forEach((u) => u());
+    unsubscribers = [];
+    // สิทธิ์อาจเพิ่งถูกแก้ใน Console (เช่นเปลี่ยนอีเมล) → ขอ token ใหม่แล้วลองอีกครั้ง
+    if (!retried && err?.code === 'permission-denied' && auth.currentUser) {
+      try {
+        await auth.currentUser.getIdToken(true);
+        subscribeData(true);
+        return;
+      } catch { /* แสดง error ด้านล่าง */ }
+    }
+    state.loadError = err?.code === 'permission-denied'
+      ? 'บัญชีนี้ไม่มีสิทธิ์เข้าถึงข้อมูล (บัญชีต้องเป็น ชื่อผู้ใช้@crm.local)'
+      : friendlyError(err);
+    render();
+  };
   unsubscribers.push(onSnapshot(collection(db, 'customers'), (snap) => {
     state.customers = new Map(snap.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
     state.loaded.customers = true;
     render();
     refreshOpenDetail();
-  }, (err) => toast(friendlyError(err))));
+  }, onError));
   unsubscribers.push(onSnapshot(collection(db, 'appointments'), (snap) => {
     state.appointments = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     state.loaded.appointments = true;
     render();
     refreshOpenDetail();
-  }, (err) => toast(friendlyError(err))));
+  }, onError));
 }
 
 function applyUrlParams() {
@@ -312,6 +329,15 @@ function render() {
 
   const ready = state.loaded.customers && state.loaded.appointments;
   const view = $('#view');
+  if (state.loadError) {
+    view.innerHTML = `
+      <div class="empty">
+        <p class="error">${esc(state.loadError)}</p>
+        <button class="btn primary" data-action="retry-load">ลองใหม่</button>
+        <button class="btn" data-action="logout-now" style="margin-left:8px">ออกจากระบบ</button>
+      </div>`;
+    return;
+  }
   if (!ready) { view.innerHTML = '<p class="empty">กำลังโหลดข้อมูล…</p>'; return; }
   if (state.tab === 'calendar') view.innerHTML = renderCalendar();
   else if (state.tab === 'customers') {
@@ -1007,6 +1033,12 @@ async function handleAction(el, e) {
     }
     case 'logout':
       if (confirm('ออกจากระบบ?')) await signOut(auth);
+      break;
+    case 'logout-now': await signOut(auth); break;
+    case 'retry-load':
+      state.loadError = '';
+      render();
+      subscribeData();
       break;
     default:
       return;

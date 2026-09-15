@@ -3,7 +3,11 @@ const listeners = new Set();
 let current = sessionStorage.getItem('mockUser') ? { uid: 'mock', email: sessionStorage.getItem('mockUser') } : null;
 const emit = () => listeners.forEach((cb) => cb(current));
 
-export function getAuth() { return {}; }
+export function getAuth() {
+  return {
+    get currentUser() { return current && { ...current, getIdToken: async () => 'mock-token' }; },
+  };
+}
 export function onAuthStateChanged(_auth, cb) { listeners.add(cb); setTimeout(() => cb(current), 50); return () => listeners.delete(cb); }
 export async function signInWithEmailAndPassword(_auth, email) {
   current = { uid: 'mock', email };
