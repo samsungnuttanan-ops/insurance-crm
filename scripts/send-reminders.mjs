@@ -37,8 +37,14 @@ const appts = apptSnap.docs
   .filter((a) => (a.status || 'pending') === 'pending')
   .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
 
-console.log(`Date ${date}: ${appts.length} pending appointment(s)`);
-if (appts.length === 0) process.exit(0);
+const TASK_ICONS = { general: '📌', meeting: '👥', errand: '🚗', document: '📄' };
+const taskSnap = await db.collection('tasks').where('dueDate', '==', date).get();
+const tasks = taskSnap.docs
+  .map((d) => ({ id: d.id, ...d.data() }))
+  .filter((t) => !t.done);
+
+console.log(`Date ${date}: ${appts.length} pending appointment(s), ${tasks.length} task(s)`);
+if (appts.length === 0 && tasks.length === 0) process.exit(0);
 
 const customerIds = [...new Set(appts.map((a) => a.customerId).filter(Boolean))];
 const customerDocs = customerIds.length
@@ -46,12 +52,19 @@ const customerDocs = customerIds.length
   : [];
 const names = new Map(customerDocs.filter((d) => d.exists).map((d) => [d.id, d.data().name]));
 
-const lines = appts.map((a) => {
-  const who = names.get(a.customerId) || a.customerName || 'ลูกค้า';
-  const where = a.location ? ` @ ${a.location}` : '';
-  return `${a.time || '--:--'} ${who} – ${a.topic || 'นัดหมาย'}${where}`;
-});
-const title = `พรุ่งนี้มีนัด ${appts.length} รายการ`;
+const entries = [
+  ...appts.map((a) => {
+    const who = names.get(a.customerId) || a.customerName || 'ลูกค้า';
+    const where = a.location ? ` @ ${a.location}` : '';
+    return { time: a.time || '', text: `${a.time || '--:--'} 👤 ${who} – ${a.topic || 'นัดหมาย'}${where}` };
+  }),
+  ...tasks.map((t) => {
+    const where = t.location ? ` @ ${t.location}` : '';
+    return { time: t.dueTime || '', text: `${t.dueTime || 'ทั้งวัน'} ${TASK_ICONS[t.type] || '📌'} ${t.title}${where}` };
+  }),
+].sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
+const lines = entries.map((e) => e.text);
+const title = `พรุ่งนี้มี ${[appts.length ? `นัดลูกค้า ${appts.length}` : '', tasks.length ? `งาน ${tasks.length}` : ''].filter(Boolean).join(' · ')} รายการ`;
 const body = lines.slice(0, 6).join('\n') + (lines.length > 6 ? `\n…และอีก ${lines.length - 6} รายการ` : '');
 console.log(`${title}\n${body}`);
 

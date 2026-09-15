@@ -19,6 +19,7 @@ function seed() {
   const tasks = {
     t1: { title: 'เตรียมเอกสารเคลม คุณสมชาย', notes: 'ใบรับรองแพทย์ + สำเนาบัตร', dueDate: day(0), dueTime: '15:00', customerId: 'c1', done: false, doneAt: null, createdAt: new Date().toISOString() },
     t2: { title: 'ส่งใบเสนอราคาให้คุณวิชัย', notes: '', dueDate: day(-1), dueTime: '', customerId: 'c3', done: false, doneAt: null, createdAt: new Date().toISOString() },
+    t5: { title: 'ประชุมทีมประจำเดือน', type: 'meeting', location: 'สำนักงานสาขาสีลม', notes: '', dueDate: day(0), dueTime: '10:45', customerId: '', done: false, doneAt: null, createdAt: new Date().toISOString() },
     t3: { title: 'ซื้อแฟ้มเอกสาร', notes: '', dueDate: '', dueTime: '', customerId: '', done: false, doneAt: null, createdAt: new Date().toISOString() },
     t4: { title: 'อัปเดตรายชื่อลูกค้าเดือนนี้', notes: '', dueDate: day(-2), dueTime: '', customerId: '', done: true, doneAt: new Date().toISOString(), createdAt: new Date().toISOString() },
   };

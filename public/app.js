@@ -38,7 +38,13 @@ const FREQ = {
   semiannual: { label: 'ราย 6 เดือน', months: 6 },
   annual: { label: 'รายปี', months: 12 },
 };
-const CONFLICT_MINUTES = 60; // นัดที่ห่างกันน้อยกว่านี้ถือว่าเวลาชน
+const TASK_TYPES = {
+  general: { label: 'งานทั่วไป', icon: '📌' },
+  meeting: { label: 'ประชุม', icon: '👥' },
+  errand: { label: 'ไปธุระ / นอกสถานที่', icon: '🚗' },
+  document: { label: 'เอกสาร', icon: '📄' },
+};
+const CONFLICT_MINUTES = 60; // นัด/งานที่ห่างกันน้อยกว่านี้ถือว่าเวลาชน
 const UPCOMING_DAYS = 7;
 const OVERDUE_LOOKBACK_DAYS = 90;
 const DOW = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
@@ -164,18 +170,37 @@ function eventsInRange(from, to) {
   return events;
 }
 
-function conflictIds(appts) {
-  const pending = appts.filter((a) => a.status === 'pending' && a.time)
+// รายการที่ใช้เวลา: นัดที่ยังรอพบ + งานที่ยังไม่เสร็จและระบุเวลา
+function busyItems(events) {
+  return events
+    .filter((e) => e.time && ((e.kind === 'appt' && e.appt.status === 'pending') || (e.kind === 'task' && !e.task.done)))
+    .map((e) => (e.kind === 'appt'
+      ? { id: e.appt.id, time: e.time, label: `นัด ${customerName(e.appt)}` }
+      : { id: e.task.id, time: e.time, label: `${TASK_TYPES[e.task.type]?.icon || '📌'} ${e.task.title}` }))
     .sort((a, b) => a.time.localeCompare(b.time));
+}
+
+function conflictIds(events) {
+  const busy = busyItems(events);
   const ids = new Set();
-  for (let i = 0; i < pending.length; i++) {
-    for (let j = i + 1; j < pending.length; j++) {
-      if (toMinutes(pending[j].time) - toMinutes(pending[i].time) < CONFLICT_MINUTES) {
-        ids.add(pending[i].id); ids.add(pending[j].id);
+  for (let i = 0; i < busy.length; i++) {
+    for (let j = i + 1; j < busy.length; j++) {
+      if (toMinutes(busy[j].time) - toMinutes(busy[i].time) < CONFLICT_MINUTES) {
+        ids.add(busy[i].id); ids.add(busy[j].id);
       } else break;
     }
   }
   return ids;
+}
+
+// ถามยืนยันถ้าเวลาใกล้กับนัด/งานอื่นในวันเดียวกัน — คืน false ถ้าผู้ใช้กดยกเลิก
+function confirmNoClash(date, time, excludeId) {
+  const mins = toMinutes(time);
+  const clash = busyItems(eventsInRange(date, date))
+    .filter((b) => b.id !== excludeId && Math.abs(toMinutes(b.time) - mins) < CONFLICT_MINUTES);
+  if (!clash.length) return true;
+  const list = clash.map((b) => `• ${b.time} ${b.label}`).join('\n');
+  return confirm(`เวลานี้ใกล้กับรายการอื่น:\n${list}\n\nต้องการบันทึกต่อหรือไม่?`);
 }
 
 /* ====================================================================
@@ -404,7 +429,7 @@ function renderEvent(e, { conflicts = new Set(), showDate = false } = {}) {
       </div>`;
   }
   if (e.kind === 'task') {
-    return renderTaskItem(e.task, { showDate });
+    return renderTaskItem(e.task, { showDate, conflict: conflicts.has(e.task.id) });
   }
   const c = e.customer;
   if (e.kind === 'premium') {
@@ -430,18 +455,21 @@ function renderEvent(e, { conflicts = new Set(), showDate = false } = {}) {
     </div>`;
 }
 
-function renderTaskItem(t, { showDate = true } = {}) {
+function renderTaskItem(t, { showDate = true, conflict = false } = {}) {
+  const type = TASK_TYPES[t.type] || TASK_TYPES.general;
   const c = t.customerId && state.customers.get(t.customerId);
   const due = t.dueDate
     ? [showDate ? dateShort(t.dueDate) : '', t.dueTime, t.done ? '' : relDay(t.dueDate)].filter(Boolean).join(' · ')
     : '';
   const overdue = !t.done && t.dueDate && t.dueDate < todayStr();
   return `
-    <div class="item task ${t.done ? 'task-done' : ''}" data-action="edit-task" data-id="${t.id}" role="button" tabindex="0">
+    <div class="item task ${t.done ? 'task-done' : ''} ${conflict ? 'conflict' : ''}" data-action="edit-task" data-id="${t.id}" role="button" tabindex="0">
       <button type="button" class="check ${t.done ? 'on' : ''}" data-action="toggle-task" data-id="${t.id}" aria-label="${t.done ? 'ยกเลิกทำเสร็จ' : 'ทำเสร็จแล้ว'}">✓</button>
       <span class="body">
-        <span class="title">${esc(t.title)}</span>
+        <span class="title">${type.icon} ${esc(t.title)}</span>
         ${overdue ? '<span class="tag warn">เลยกำหนด</span>' : ''}
+        ${conflict ? '<span class="tag warn">เวลาชน</span>' : ''}
+        ${t.location ? `<div class="sub">📍 ${esc(t.location)}</div>` : ''}
         ${t.notes ? `<div class="sub note">${esc(t.notes)}</div>` : ''}
         ${due || c ? `<div class="sub">${due ? `🗓 ${esc(due)}` : ''}${due && c ? ' · ' : ''}${c ? `👤 ${esc(c.name)}` : ''}</div>` : ''}
         ${c?.phone ? `<div class="sub">${telLink(c.phone)}</div>` : ''}
@@ -518,12 +546,12 @@ function renderWeek() {
   for (let i = 0; i < 7; i++) {
     const s = addDays(start, i);
     const dayEvents = events.filter((e) => e.date === s);
-    const conflicts = conflictIds(dayEvents.filter((e) => e.kind === 'appt').map((e) => e.appt));
+    const conflicts = conflictIds(dayEvents);
     html += `
       <div class="week-day">
         <h3 class="${s === t ? 'today' : ''}">
           <span>${fmtDayLong.format(parse(s))}</span>
-          <button class="btn ghost small add" data-action="new-appt" data-date="${s}">＋ นัด</button>
+          <button class="btn ghost small add" data-action="add-at" data-date="${s}">＋ เพิ่ม</button>
         </h3>
         ${dayEvents.length ? dayEvents.map((e) => renderEvent(e, { conflicts })).join('') : '<div class="sub" style="color:var(--muted);font-size:13px;padding:0 0 4px">ว่าง</div>'}
       </div>`;
@@ -533,19 +561,19 @@ function renderWeek() {
 
 function renderDay(s) {
   const events = eventsInRange(s, s);
-  const conflicts = conflictIds(events.filter((e) => e.kind === 'appt').map((e) => e.appt));
+  const conflicts = conflictIds(events);
   let html = '';
-  if (conflicts.size) html += `<div class="conflict-note">⚠️ มีนัดที่เวลาใกล้กันไม่ถึง ${CONFLICT_MINUTES} นาที ลองเลื่อนนัดดูครับ</div>`;
+  if (conflicts.size) html += `<div class="conflict-note">⚠️ มีรายการที่เวลาใกล้กันไม่ถึง ${CONFLICT_MINUTES} นาที ลองเลื่อนนัดดูครับ</div>`;
   html += events.length
     ? events.map((e) => renderEvent(e, { conflicts })).join('')
-    : `<div class="empty">ยังไม่มีนัดในวันนี้<br><button class="btn primary" style="margin-top:10px" data-action="new-appt" data-date="${s}">＋ เพิ่มนัดหมาย</button></div>`;
+    : `<div class="empty">ยังไม่มีนัดหรืองานในวันนี้<br><button class="btn primary" style="margin-top:10px" data-action="add-at" data-date="${s}">＋ เพิ่มนัด / งาน</button></div>`;
   return html;
 }
 
 // มุมมอง "วัน": ตารางรายชั่วโมง แตะช่องว่างเพื่อเพิ่มนัดเวลานั้น
 function renderTimeline(s) {
   const events = eventsInRange(s, s);
-  const conflicts = conflictIds(events.filter((e) => e.kind === 'appt').map((e) => e.appt));
+  const conflicts = conflictIds(events);
   const allDay = events.filter((e) => !e.time);
   const timed = events.filter((e) => e.time);
   const hours = timed.map((e) => Number(e.time.slice(0, 2)));
@@ -555,7 +583,7 @@ function renderTimeline(s) {
   const nowHour = new Date().getHours();
 
   let html = `<h2 class="cal-title">${fmtDayLong.format(parse(s))} <span class="tag">${relDay(s)}</span></h2>`;
-  if (conflicts.size) html += `<div class="conflict-note">⚠️ มีนัดที่เวลาใกล้กันไม่ถึง ${CONFLICT_MINUTES} นาที ลองเลื่อนนัดดูครับ</div>`;
+  if (conflicts.size) html += `<div class="conflict-note">⚠️ มีรายการที่เวลาใกล้กันไม่ถึง ${CONFLICT_MINUTES} นาที ลองเลื่อนนัดดูครับ</div>`;
   if (allDay.length) {
     html += `<div class="allday"><div class="allday-label">ทั้งวัน</div>${allDay.map((e) => renderEvent(e, { conflicts })).join('')}</div>`;
   }
@@ -569,8 +597,8 @@ function renderTimeline(s) {
         <div class="slot-time">${hh}:00</div>
         <div class="slot-body">
           ${inHour.map((e) => renderEvent(e, { conflicts })).join('')}
-          <button type="button" class="slot-add ${inHour.length ? 'compact' : ''}" data-action="new-appt" data-date="${s}" data-time="${hh}:00"
-            aria-label="เพิ่มนัด ${hh}:00">${inHour.length ? '＋' : '＋ ว่าง — แตะเพื่อนัด'}</button>
+          <button type="button" class="slot-add ${inHour.length ? 'compact' : ''}" data-action="add-at" data-date="${s}" data-time="${hh}:00"
+            aria-label="เพิ่มนัดหรืองาน ${hh}:00">${inHour.length ? '＋' : '＋ ว่าง — แตะเพื่อเพิ่ม'}</button>
         </div>
       </div>`;
   }
@@ -669,17 +697,56 @@ function renderTaskList() {
   return seg + (body || '<div class="empty">ไม่มีงานค้าง 🎉<br>พิมพ์งานในช่องด้านบน หรือกดปุ่ม ＋ เพื่อใส่รายละเอียด</div>');
 }
 
+// เลือกว่าจะเพิ่มอะไรลงวัน/เวลานี้ในปฏิทิน
+function openAddChooser(date, time = '') {
+  const when = `${fmtDayLong.format(parse(date))}${time ? ` เวลา ${time}` : ''}`;
+  openSheet('เพิ่มลงปฏิทิน', `
+    <p class="hint" style="margin:0 0 14px">${when}</p>
+    <div class="chooser">
+      <button type="button" data-action="choose-appt" data-date="${date}" data-time="${time}">
+        <span class="chooser-icon appt">👤</span>
+        <span><strong>นัดลูกค้า</strong><small>ลูกค้าโทรนัด / เสนอแบบประกัน / เซ็นสัญญา</small></span>
+      </button>
+      ${Object.entries(TASK_TYPES).map(([k, v]) => `
+        <button type="button" data-action="choose-task" data-type="${k}" data-date="${date}" data-time="${time}">
+          <span class="chooser-icon task">${v.icon}</span>
+          <span><strong>${v.label}</strong><small>${{
+            general: 'สิ่งที่ต้องทำ จดโน้ตงาน',
+            meeting: 'ประชุมทีม / ประชุมบริษัท / อบรม',
+            errand: 'ต้องไปที่ไหน เช่น ธนาคาร สาขา บ้านลูกค้า',
+            document: 'เตรียม / ส่งเอกสาร เคลม ใบเสนอราคา',
+          }[k]}</small></span>
+        </button>`).join('')}
+    </div>`);
+}
+
 function openTaskForm(task = null, preset = {}) {
-  const x = task || { title: preset.title || '', notes: '', dueDate: preset.dueDate || '', dueTime: '', customerId: '', done: false };
+  const x = task || {
+    title: preset.title || '', notes: '', type: preset.type || 'general', location: '',
+    dueDate: preset.dueDate || '', dueTime: preset.dueTime || '', customerId: '', done: false,
+  };
+  const type = TASK_TYPES[x.type] ? x.type : 'general';
   const customers = [...state.customers.values()].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'th'));
-  openSheet(task ? 'แก้ไขงาน' : 'งานใหม่', `
+  const placeholders = {
+    general: 'เช่น โทรตามเอกสารคุณสมชาย', meeting: 'เช่น ประชุมทีมประจำเดือน',
+    errand: 'เช่น ไปธนาคาร / ไปสาขา', document: 'เช่น ส่งเอกสารเคลม',
+  };
+  openSheet(task ? 'แก้ไขงาน' : `${TASK_TYPES[type].icon} ${TASK_TYPES[type].label}`, `
     <form id="task-form" class="form-grid" data-id="${task ? task.id : ''}" novalidate>
-      <label>งานที่ต้องทำ <span class="req">*</span><input name="title" value="${esc(x.title)}" placeholder="เช่น เตรียมเอกสารเคลม คุณสมชาย"></label>
-      <label>โน้ต / รายละเอียด<textarea name="notes" rows="4" placeholder="จดรายละเอียดเพิ่มเติม">${esc(x.notes)}</textarea></label>
+      <div>
+        <label>ประเภท</label>
+        <div class="type-chips">
+          ${Object.entries(TASK_TYPES).map(([k, v]) => `<button type="button" data-action="task-type" data-v="${k}" class="${type === k ? 'active' : ''}">${v.icon} ${v.label}</button>`).join('')}
+        </div>
+        <input type="hidden" name="type" value="${type}">
+      </div>
+      <label>ต้องทำอะไร <span class="req">*</span><input name="title" value="${esc(x.title)}" placeholder="${placeholders[type]}"></label>
       <div class="field-row">
-        <label>วันที่ต้องทำ<input name="dueDate" type="date" value="${esc(x.dueDate)}"></label>
+        <label>วันที่<input name="dueDate" type="date" value="${esc(x.dueDate)}"></label>
         <label>เวลา<input name="dueTime" type="time" value="${esc(x.dueTime)}"></label>
       </div>
+      <label>สถานที่<input name="location" value="${esc(x.location)}" placeholder="เช่น สำนักงานสาขา / ธนาคารกรุงเทพ สีลม"></label>
+      <label>โน้ต / รายละเอียด<textarea name="notes" rows="3" placeholder="จดรายละเอียดเพิ่มเติม">${esc(x.notes)}</textarea></label>
       <label>ลูกค้าที่เกี่ยวข้อง
         <select name="customerId">
           <option value="">— ไม่ระบุ —</option>
@@ -703,14 +770,18 @@ function saveTask(form) {
   const data = {
     title: f.title.value.trim(),
     notes: f.notes.value.trim(),
+    type: f.type.value,
+    location: f.location.value.trim(),
     dueDate: f.dueDate.value,
     dueTime: f.dueDate.value ? f.dueTime.value : '',
     customerId: f.customerId.value,
   };
-  if (!data.title) { errEl.textContent = 'กรุณาพิมพ์งานที่ต้องทำ'; errEl.hidden = false; f.title.focus(); return; }
+  if (!data.title) { errEl.textContent = 'กรุณาพิมพ์ว่าต้องทำอะไร'; errEl.hidden = false; f.title.focus(); return; }
   const id = form.dataset.id;
+  const done = id ? f.done.checked : false;
+  if (!done && data.dueDate && data.dueTime && !confirmNoClash(data.dueDate, data.dueTime, id)) return;
+  if (data.dueDate) state.selected = data.dueDate;
   if (id) {
-    const done = f.done.checked;
     const prev = state.tasks.find((x) => x.id === id);
     write(updateDoc(doc(db, 'tasks', id), {
       ...data, done, ...(done !== !!prev?.done ? { doneAt: done ? serverTimestamp() : null } : {}), updatedAt: serverTimestamp(),
@@ -719,6 +790,7 @@ function saveTask(form) {
     write(addDoc(collection(db, 'tasks'), { ...data, done: false, doneAt: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
   }
   closeSheet();
+  render();
   toast('บันทึกงานแล้ว');
 }
 
@@ -919,15 +991,7 @@ async function saveAppt(form) {
   if (!data.date || !data.time) return show('กรุณาเลือกวันที่และเวลา');
   if (!data.topic) { f.topicOther.focus(); return show('กรุณาพิมพ์เรื่องที่นัด'); }
 
-  if (data.status === 'pending') {
-    const mins = toMinutes(data.time);
-    const clash = state.appointments.filter((a) => a.id !== id && a.date === data.date && a.status === 'pending'
-      && a.time && Math.abs(toMinutes(a.time) - mins) < CONFLICT_MINUTES);
-    if (clash.length) {
-      const list = clash.map((a) => `• ${a.time} ${customerName(a)}`).join('\n');
-      if (!confirm(`เวลานี้ใกล้กับนัดอื่น:\n${list}\n\nต้องการบันทึกต่อหรือไม่?`)) return;
-    }
-  }
+  if (data.status === 'pending' && !confirmNoClash(data.date, data.time, id)) return;
 
   if (newCustomer) {
     const ref = doc(collection(db, 'customers'));
@@ -1150,7 +1214,17 @@ async function handleAction(el, e) {
       state.selected = el.dataset.date;
       render();
       break;
-    case 'new-appt': openApptForm(null, { date: el.dataset.date, time: el.dataset.time }); break;
+    case 'add-at': openAddChooser(el.dataset.date, el.dataset.time || ''); break;
+    case 'choose-appt': openApptForm(null, { date: el.dataset.date, time: el.dataset.time }); break;
+    case 'choose-task':
+      openTaskForm(null, { type: el.dataset.type, dueDate: el.dataset.date, dueTime: el.dataset.time });
+      break;
+    case 'task-type': {
+      const form = $('#task-form');
+      form.elements.type.value = el.dataset.v;
+      form.querySelectorAll('.type-chips button').forEach((b) => b.classList.toggle('active', b === el));
+      break;
+    }
     case 'task-view': state.taskView = el.dataset.v; render(); break;
     case 'edit-task': {
       const task = state.tasks.find((x) => x.id === id);
@@ -1281,7 +1355,7 @@ document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('c
 $('#fab').addEventListener('click', () => {
   if (state.tab === 'customers') openCustomerForm();
   else if (state.tab === 'tasks') openTaskForm(null, { title: $('#task-quick')?.elements.title.value.trim() });
-  else openApptForm(null, { date: state.calMode === 'month' || state.calMode === 'day' ? state.selected : todayStr() });
+  else openAddChooser(state.tab === 'calendar' && state.calMode !== 'week' ? state.selected : todayStr());
 });
 
 document.addEventListener('input', (e) => {
@@ -1312,7 +1386,7 @@ document.addEventListener('submit', (e) => {
     const title = input.value.trim();
     if (!title) { input.focus(); return; }
     write(addDoc(collection(db, 'tasks'), {
-      title, notes: '', dueDate: '', dueTime: '', customerId: '', done: false, doneAt: null,
+      title, notes: '', type: 'general', location: '', dueDate: '', dueTime: '', customerId: '', done: false, doneAt: null,
       createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     }));
     input.value = '';

@@ -203,6 +203,25 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--p
 .checkline { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 15px; }
 .checkline input { width: 22px; height: 22px; min-height: 0; margin: 0; accent-color: var(--task); }
 
+/* เลือกเพิ่มนัด / งาน */
+.chooser { display: grid; gap: 10px; }
+.chooser button {
+  display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; cursor: pointer;
+  background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px; box-shadow: var(--shadow);
+}
+.chooser button:active { transform: scale(.99); background: var(--primary-soft); }
+.chooser strong { display: block; font-size: 16px; }
+.chooser small { display: block; color: var(--muted); font-size: 13px; }
+.chooser-icon { flex: none; width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; font-size: 22px; }
+.chooser-icon.appt { background: var(--appt-soft); }
+.chooser-icon.task { background: var(--task-soft); }
+.type-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.type-chips button {
+  border: 1.5px solid var(--line); background: #fff; border-radius: 999px; padding: 7px 12px;
+  font-size: 14px; font-weight: 500; cursor: pointer;
+}
+.type-chips button.active { border-color: var(--task); background: var(--task-soft); color: #0b7285; font-weight: 700; }
+
 /* ตารางรายชั่วโมง */
 .allday { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 10px 10px 2px; margin-bottom: 12px; box-shadow: var(--shadow); }
 .allday-label { font-size: 12px; font-weight: 700; color: var(--muted); margin: 0 4px 8px; }
