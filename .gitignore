@@ -1,0 +1,8 @@
+node_modules/
+.firebase/
+*.log
+firebase-debug*.log
+# ห้าม commit กุญแจ service account เด็ดขาด
+*service-account*.json
+*-firebase-adminsdk-*.json
+.env

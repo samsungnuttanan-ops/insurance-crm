@@ -1,0 +1,32 @@
+name: แจ้งเตือนนัดพรุ่งนี้
+
+on:
+  schedule:
+    # 10:55 UTC = 17:55 เวลาไทย (GitHub มักเริ่มช้ากว่าเวลาที่ตั้ง 5–15 นาที)
+    - cron: '55 10 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'ทดสอบส่งเตือนของวันที่ (YYYY-MM-DD) เว้นว่าง = พรุ่งนี้'
+        required: false
+        default: ''
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: scripts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: scripts/package-lock.json
+      - run: npm ci
+      - run: node send-reminders.mjs
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          REMIND_DATE: ${{ inputs.date }}

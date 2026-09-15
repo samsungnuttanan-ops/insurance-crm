@@ -1,0 +1,11 @@
+{
+  "name": "insurance-crm-scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "remind": "node send-reminders.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.4.0"
+  }
+}
