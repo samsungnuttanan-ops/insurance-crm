@@ -16,6 +16,9 @@ service cloud.firestore {
     match /appointments/{id} {
       allow read, write: if isMember();
     }
+    match /tasks/{id} {
+      allow read, write: if isMember();
+    }
     match /fcmTokens/{token} {
       allow read, write: if isMember();
     }

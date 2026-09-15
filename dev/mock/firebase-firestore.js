@@ -16,7 +16,13 @@ function seed() {
     a4: { date: day(-3), time: '09:00', customerId: 'c2', customerName: 'สุดา พรมมา', topic: 'เก็บเบี้ย', location: '', notes: '', status: 'pending' },
     a5: { date: day(-1), time: '16:00', customerId: 'c1', customerName: 'สมชาย ใจดี', topic: 'ติดตาม', location: '', notes: '', status: 'done' },
   };
-  return { customers, appointments, fcmTokens: {} };
+  const tasks = {
+    t1: { title: 'เตรียมเอกสารเคลม คุณสมชาย', notes: 'ใบรับรองแพทย์ + สำเนาบัตร', dueDate: day(0), dueTime: '15:00', customerId: 'c1', done: false, doneAt: null, createdAt: new Date().toISOString() },
+    t2: { title: 'ส่งใบเสนอราคาให้คุณวิชัย', notes: '', dueDate: day(-1), dueTime: '', customerId: 'c3', done: false, doneAt: null, createdAt: new Date().toISOString() },
+    t3: { title: 'ซื้อแฟ้มเอกสาร', notes: '', dueDate: '', dueTime: '', customerId: '', done: false, doneAt: null, createdAt: new Date().toISOString() },
+    t4: { title: 'อัปเดตรายชื่อลูกค้าเดือนนี้', notes: '', dueDate: day(-2), dueTime: '', customerId: '', done: true, doneAt: new Date().toISOString(), createdAt: new Date().toISOString() },
+  };
+  return { customers, appointments, tasks, fcmTokens: {} };
 }
 
 let store;

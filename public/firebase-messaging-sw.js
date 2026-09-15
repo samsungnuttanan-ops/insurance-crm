@@ -7,7 +7,7 @@ firebase.initializeApp(self.FIREBASE_CONFIG);
 // ข้อความที่มี notification จะถูกแสดงอัตโนมัติโดย SDK (รวมถึงลิงก์เมื่อกด)
 firebase.messaging();
 
-const CACHE = 'insurance-crm-v4';
+const CACHE = 'insurance-crm-v5';
 const APP_SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/config.js', '/manifest.webmanifest', '/icons/icon-192.png'];
 
 self.addEventListener('install', (event) => {

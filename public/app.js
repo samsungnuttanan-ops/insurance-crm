@@ -42,6 +42,8 @@ const CONFLICT_MINUTES = 60; // นัดที่ห่างกันน้อ
 const UPCOMING_DAYS = 7;
 const OVERDUE_LOOKBACK_DAYS = 90;
 const DOW = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+const DAY_START_HOUR = 7; // ตารางรายชั่วโมง: ช่วงเวลาที่แสดงเสมอ
+const DAY_END_HOUR = 20;
 
 /* ====================================================================
  * State
@@ -49,12 +51,14 @@ const DOW = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
 const state = {
   customers: new Map(),
   appointments: [],
+  tasks: [],
   tab: 'calendar',
   calMode: 'month',
   selected: todayStr(),
   custQuery: '',
   custFilter: 'all',
-  loaded: { customers: false, appointments: false },
+  taskView: 'open',
+  loaded: { customers: false, appointments: false, tasks: false },
 };
 let unsubscribers = [];
 
@@ -148,7 +152,12 @@ function eventsInRange(from, to) {
       events.push({ kind: 'contact', date: c.nextContactDate, time: '', customer: c });
     }
   }
-  const order = { appt: 0, contact: 1, premium: 2 };
+  for (const t of state.tasks) {
+    if (t.dueDate && t.dueDate >= from && t.dueDate <= to) {
+      events.push({ kind: 'task', date: t.dueDate, time: t.dueTime || '', task: t });
+    }
+  }
+  const order = { appt: 0, task: 1, contact: 2, premium: 3 };
   events.sort((x, y) => x.date.localeCompare(y.date)
     || (x.time || '99').localeCompare(y.time || '99')
     || order[x.kind] - order[y.kind]);
@@ -174,9 +183,10 @@ function conflictIds(appts) {
  * ==================================================================== */
 function buildSummary() {
   const t = todayStr();
-  const today = eventsInRange(t, t).filter((e) => !(e.kind === 'appt' && e.appt.status === 'cancelled') && !(e.kind === 'premium' && e.paid));
+  const today = eventsInRange(t, t).filter((e) => !(e.kind === 'appt' && e.appt.status === 'cancelled')
+    && !(e.kind === 'premium' && e.paid) && !(e.kind === 'task' && e.task.done));
   const upcoming = eventsInRange(addDays(t, 1), addDays(t, UPCOMING_DAYS))
-    .filter((e) => !(e.kind === 'appt' && e.appt.status !== 'pending') && !(e.kind === 'premium' && e.paid));
+    .filter((e) => !(e.kind === 'appt' && e.appt.status !== 'pending') && !(e.kind === 'premium' && e.paid) && !(e.kind === 'task' && e.task.done));
 
   const overdue = [];
   for (const a of state.appointments) {
@@ -187,6 +197,9 @@ function buildSummary() {
       if (!isPaid(c, due)) overdue.push({ kind: 'premium', date: due, time: '', customer: c, paid: false });
     }
     if (c.nextContactDate && c.nextContactDate < t) overdue.push({ kind: 'contact', date: c.nextContactDate, time: '', customer: c });
+  }
+  for (const task of state.tasks) {
+    if (!task.done && task.dueDate && task.dueDate < t) overdue.push({ kind: 'task', date: task.dueDate, time: task.dueTime || '', task });
   }
   overdue.sort((x, y) => y.date.localeCompare(x.date));
   return { today, upcoming, overdue };
@@ -302,6 +315,11 @@ function subscribeData(retried = false) {
     render();
     refreshOpenDetail();
   }, onError));
+  unsubscribers.push(onSnapshot(collection(db, 'tasks'), (snap) => {
+    state.tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    state.loaded.tasks = true;
+    render();
+  }, onError));
 }
 
 function applyUrlParams() {
@@ -317,20 +335,21 @@ function applyUrlParams() {
 /* ====================================================================
  * Render หลัก
  * ==================================================================== */
-const TITLES = { calendar: 'ปฏิทิน', customers: 'ลูกค้า', summary: 'แจ้งเตือน' };
+const TITLES = { calendar: 'ปฏิทิน', tasks: 'งานที่ต้องทำ', customers: 'ลูกค้า', summary: 'แจ้งเตือน' };
+const FAB_LABELS = { calendar: 'เพิ่มนัดหมาย', tasks: 'เพิ่มงาน', customers: 'เพิ่มลูกค้า', summary: 'เพิ่มนัดหมาย' };
 
 function render() {
   document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.tab));
   $('#page-title').textContent = TITLES[state.tab];
   $('#page-sub').textContent = fmtDayLong.format(new Date());
-  $('#fab').setAttribute('aria-label', state.tab === 'customers' ? 'เพิ่มลูกค้า' : 'เพิ่มนัดหมาย');
+  $('#fab').setAttribute('aria-label', FAB_LABELS[state.tab]);
 
   const s = buildSummary();
   const count = s.today.length + s.overdue.length;
   $('#badge').hidden = count === 0;
   $('#badge').textContent = count > 99 ? '99+' : count;
 
-  const ready = state.loaded.customers && state.loaded.appointments;
+  const ready = state.loaded.customers && state.loaded.appointments && state.loaded.tasks;
   const view = $('#view');
   if (state.loadError) {
     view.innerHTML = `
@@ -347,6 +366,9 @@ function render() {
     // อย่าสร้างช่องค้นหาใหม่ขณะพิมพ์ (คีย์บอร์ดมือถือจะหลุด)
     if ($('#cust-search')) $('#cust-results').innerHTML = renderCustomerList();
     else view.innerHTML = renderCustomers();
+  } else if (state.tab === 'tasks') {
+    if ($('#task-quick')) $('#task-results').innerHTML = renderTaskList();
+    else view.innerHTML = renderTasks();
   } else view.innerHTML = renderSummary(s);
 
   $('#topbar-actions').innerHTML = state.tab === 'calendar'
@@ -355,43 +377,76 @@ function render() {
 }
 
 /* ---------- รายการ (ใช้ร่วมกันทุกหน้า) ---------- */
+// เบอร์โทรที่แตะแล้วโทรออก (data-stop = ไม่ให้เปิดรายการที่ครอบอยู่)
+function telLink(phone) {
+  return phone ? `<a class="tel" href="${telHref(phone)}" data-stop>📞 ${esc(phone)}</a>` : '';
+}
+function callButton(phone, name) {
+  return phone ? `<a class="call" href="${telHref(phone)}" aria-label="โทรหา ${esc(name)}" data-stop>📞</a>` : '';
+}
+
 function renderEvent(e, { conflicts = new Set(), showDate = false } = {}) {
   const dateLabel = showDate ? `${dateShort(e.date)} · ${relDay(e.date)}` : '';
   if (e.kind === 'appt') {
     const a = e.appt;
     const c = a.customerId && state.customers.get(a.customerId);
-    const sub = [showDate ? dateLabel : '', a.location, c?.phone].filter(Boolean).join(' · ');
+    const sub = [a.topic, showDate ? dateLabel : '', a.location].filter(Boolean).join(' · ');
     return `
-      <button class="item ${a.status} ${conflicts.has(a.id) ? 'conflict' : ''}" data-action="edit-appt" data-id="${a.id}">
+      <div class="item ${a.status} ${conflicts.has(a.id) ? 'conflict' : ''}" data-action="edit-appt" data-id="${a.id}" role="button" tabindex="0">
         <span class="time">${esc(a.time || '--:--')}</span>
         <span class="body">
           <span class="title">${esc(customerName(a))}</span>
           ${a.status !== 'pending' ? `<span class="tag a-${a.status}">${APPT_STATUS[a.status]}</span>` : ''}
           ${conflicts.has(a.id) ? '<span class="tag warn">เวลาชน</span>' : ''}
-          <div class="sub">${esc(a.topic || '')}${sub ? ` · ${esc(sub)}` : ''}</div>
+          <div class="sub">${esc(sub)}</div>
+          ${c?.phone ? `<div class="sub">${telLink(c.phone)}</div>` : ''}
         </span>
-      </button>`;
+      </div>`;
+  }
+  if (e.kind === 'task') {
+    return renderTaskItem(e.task, { showDate });
   }
   const c = e.customer;
   if (e.kind === 'premium') {
     return `
-      <button class="item premium ${e.paid ? 'done' : ''}" data-action="view-customer" data-id="${c.id}">
+      <div class="item premium ${e.paid ? 'done' : ''}" data-action="view-customer" data-id="${c.id}" role="button" tabindex="0">
         <span class="time">เบี้ย</span>
         <span class="body">
           <span class="title">${esc(c.name)}</span>
           ${e.paid ? '<span class="tag a-done">ชำระแล้ว</span>' : ''}
           <div class="sub">ครบกำหนดชำระ (${esc(FREQ[c.premiumFrequency]?.label || '')})${showDate ? ` · ${esc(dateLabel)}` : ''}</div>
+          ${c.phone ? `<div class="sub">${telLink(c.phone)}</div>` : ''}
         </span>
-      </button>`;
+      </div>`;
   }
   return `
-    <button class="item contact" data-action="view-customer" data-id="${c.id}">
+    <div class="item contact" data-action="view-customer" data-id="${c.id}" role="button" tabindex="0">
       <span class="time">โทร</span>
       <span class="body">
         <span class="title">${esc(c.name)}</span>
-        <div class="sub">ถึงวันติดต่อลูกค้า${showDate ? ` · ${esc(dateLabel)}` : ''}${c.phone ? ` · ${esc(c.phone)}` : ''}</div>
+        <div class="sub">ถึงวันติดต่อลูกค้า${showDate ? ` · ${esc(dateLabel)}` : ''}</div>
+        ${c.phone ? `<div class="sub">${telLink(c.phone)}</div>` : ''}
       </span>
-    </button>`;
+    </div>`;
+}
+
+function renderTaskItem(t, { showDate = true } = {}) {
+  const c = t.customerId && state.customers.get(t.customerId);
+  const due = t.dueDate
+    ? [showDate ? dateShort(t.dueDate) : '', t.dueTime, t.done ? '' : relDay(t.dueDate)].filter(Boolean).join(' · ')
+    : '';
+  const overdue = !t.done && t.dueDate && t.dueDate < todayStr();
+  return `
+    <div class="item task ${t.done ? 'task-done' : ''}" data-action="edit-task" data-id="${t.id}" role="button" tabindex="0">
+      <button type="button" class="check ${t.done ? 'on' : ''}" data-action="toggle-task" data-id="${t.id}" aria-label="${t.done ? 'ยกเลิกทำเสร็จ' : 'ทำเสร็จแล้ว'}">✓</button>
+      <span class="body">
+        <span class="title">${esc(t.title)}</span>
+        ${overdue ? '<span class="tag warn">เลยกำหนด</span>' : ''}
+        ${t.notes ? `<div class="sub note">${esc(t.notes)}</div>` : ''}
+        ${due || c ? `<div class="sub">${due ? `🗓 ${esc(due)}` : ''}${due && c ? ' · ' : ''}${c ? `👤 ${esc(c.name)}` : ''}</div>` : ''}
+        ${c?.phone ? `<div class="sub">${telLink(c.phone)}</div>` : ''}
+      </span>
+    </div>`;
 }
 
 /* ---------- ปฏิทิน ---------- */
@@ -411,10 +466,11 @@ function renderCalendar() {
       <span><i style="background:var(--done)"></i>เสร็จแล้ว</span>
       <span><i style="background:var(--premium)"></i>ครบกำหนดเบี้ย</span>
       <span><i style="background:var(--contact)"></i>วันติดต่อลูกค้า</span>
+      <span><i style="background:var(--task)"></i>งาน</span>
     </div>`;
   if (mode === 'month') return toolbar + renderMonth();
   if (mode === 'week') return toolbar + renderWeek();
-  return toolbar + renderDay(state.selected, true);
+  return toolbar + renderTimeline(state.selected);
 }
 
 function renderMonth() {
@@ -425,6 +481,7 @@ function renderMonth() {
   const byDate = new Map();
   for (const e of eventsInRange(gridStart, gridEnd)) {
     if (e.kind === 'appt' && e.appt.status === 'cancelled') continue;
+    if (e.kind === 'task' && e.task.done) continue;
     if (!byDate.has(e.date)) byDate.set(e.date, []);
     byDate.get(e.date).push(e);
   }
@@ -449,7 +506,7 @@ function renderMonth() {
     <h2 class="cal-title">${fmtMonth.format(sel)}</h2>
     <div class="month">${cells}</div>
     <h3 class="section-title">${fmtDayLong.format(sel)}</h3>
-    ${renderDay(state.selected, false)}`;
+    ${renderDay(state.selected)}`;
 }
 
 function renderWeek() {
@@ -474,15 +531,50 @@ function renderWeek() {
   return html;
 }
 
-function renderDay(s, withTitle) {
+function renderDay(s) {
   const events = eventsInRange(s, s);
   const conflicts = conflictIds(events.filter((e) => e.kind === 'appt').map((e) => e.appt));
-  let html = withTitle ? `<h2 class="cal-title">${fmtDayLong.format(parse(s))} <span class="tag">${relDay(s)}</span></h2>` : '';
+  let html = '';
   if (conflicts.size) html += `<div class="conflict-note">⚠️ มีนัดที่เวลาใกล้กันไม่ถึง ${CONFLICT_MINUTES} นาที ลองเลื่อนนัดดูครับ</div>`;
   html += events.length
     ? events.map((e) => renderEvent(e, { conflicts })).join('')
     : `<div class="empty">ยังไม่มีนัดในวันนี้<br><button class="btn primary" style="margin-top:10px" data-action="new-appt" data-date="${s}">＋ เพิ่มนัดหมาย</button></div>`;
   return html;
+}
+
+// มุมมอง "วัน": ตารางรายชั่วโมง แตะช่องว่างเพื่อเพิ่มนัดเวลานั้น
+function renderTimeline(s) {
+  const events = eventsInRange(s, s);
+  const conflicts = conflictIds(events.filter((e) => e.kind === 'appt').map((e) => e.appt));
+  const allDay = events.filter((e) => !e.time);
+  const timed = events.filter((e) => e.time);
+  const hours = timed.map((e) => Number(e.time.slice(0, 2)));
+  const from = Math.min(DAY_START_HOUR, ...hours);
+  const to = Math.max(DAY_END_HOUR, ...hours);
+  const isToday = s === todayStr();
+  const nowHour = new Date().getHours();
+
+  let html = `<h2 class="cal-title">${fmtDayLong.format(parse(s))} <span class="tag">${relDay(s)}</span></h2>`;
+  if (conflicts.size) html += `<div class="conflict-note">⚠️ มีนัดที่เวลาใกล้กันไม่ถึง ${CONFLICT_MINUTES} นาที ลองเลื่อนนัดดูครับ</div>`;
+  if (allDay.length) {
+    html += `<div class="allday"><div class="allday-label">ทั้งวัน</div>${allDay.map((e) => renderEvent(e, { conflicts })).join('')}</div>`;
+  }
+  html += '<div class="timeline">';
+  for (let h = from; h <= to; h++) {
+    const hh = pad(h);
+    const inHour = timed.filter((e) => Number(e.time.slice(0, 2)) === h);
+    const now = isToday && h === nowHour ? 'now' : '';
+    html += `
+      <div class="slot ${now}">
+        <div class="slot-time">${hh}:00</div>
+        <div class="slot-body">
+          ${inHour.map((e) => renderEvent(e, { conflicts })).join('')}
+          <button type="button" class="slot-add ${inHour.length ? 'compact' : ''}" data-action="new-appt" data-date="${s}" data-time="${hh}:00"
+            aria-label="เพิ่มนัด ${hh}:00">${inHour.length ? '＋' : '＋ ว่าง — แตะเพื่อนัด'}</button>
+        </div>
+      </div>`;
+  }
+  return `${html}</div>`;
 }
 
 /* ---------- ลูกค้า ---------- */
@@ -511,7 +603,6 @@ function renderCustomerList() {
   const items = list.map((c) => {
     const next = nextPremiumDue(c);
     const extra = [
-      c.phone,
       next ? `เบี้ยงวดถัดไป ${dateShort(next)}` : '',
       c.nextContactDate ? `ติดต่อ ${dateShort(c.nextContactDate)}` : '',
     ].filter(Boolean).join(' · ');
@@ -521,9 +612,10 @@ function renderCustomerList() {
         <span class="body">
           <span class="title">${esc(c.name)}</span>
           <span class="tag s-${c.status || 'prospect'}">${CUSTOMER_STATUS[c.status || 'prospect']}</span>
-          <div class="sub">${esc(extra)}</div>
+          ${c.phone ? `<div class="sub">${telLink(c.phone)}</div>` : ''}
+          ${extra ? `<div class="sub">${esc(extra)}</div>` : ''}
         </span>
-        ${c.phone ? `<a class="call" href="${telHref(c.phone)}" aria-label="โทรหา ${esc(c.name)}" data-stop>📞</a>` : ''}
+        ${callButton(c.phone, c.name)}
       </div>`;
   }).join('');
 
@@ -531,6 +623,103 @@ function renderCustomerList() {
     <div class="chips">${chips}</div>
     <p class="hint">ทั้งหมด ${list.length} คน</p>
     ${items || `<div class="empty">${state.customers.size ? 'ไม่พบลูกค้าที่ค้นหา' : 'ยังไม่มีลูกค้า กดปุ่ม ＋ เพื่อเพิ่ม'}</div>`}`;
+}
+
+/* ---------- งานที่ต้องทำ ---------- */
+function millis(ts) {
+  if (!ts) return Date.now(); // ยังรอเซิร์ฟเวอร์ใส่เวลา = เพิ่งสร้าง
+  if (ts.toMillis) return ts.toMillis();
+  return new Date(ts).getTime() || 0;
+}
+
+function renderTasks() {
+  return `
+    <form id="task-quick" class="quick-add" autocomplete="off">
+      <input name="title" placeholder="จดงานด่วน… แล้วกด ＋" enterkeyhint="done">
+      <button class="btn primary" type="submit" aria-label="เพิ่มงาน">＋</button>
+    </form>
+    <div id="task-results">${renderTaskList()}</div>`;
+}
+
+function renderTaskList() {
+  const t = todayStr();
+  const open = state.tasks.filter((x) => !x.done);
+  const done = state.tasks.filter((x) => x.done);
+  const seg = `
+    <div class="segmented task-seg">
+      <button data-action="task-view" data-v="open" class="${state.taskView === 'open' ? 'active' : ''}">ยังไม่เสร็จ ${open.length}</button>
+      <button data-action="task-view" data-v="done" class="${state.taskView === 'done' ? 'active' : ''}">เสร็จแล้ว ${done.length}</button>
+    </div>`;
+
+  if (state.taskView === 'done') {
+    const list = done.sort((a, b) => millis(b.doneAt) - millis(a.doneAt)).slice(0, 100);
+    return seg + (list.length ? list.map((x) => renderTaskItem(x)).join('') : '<div class="empty">ยังไม่มีงานที่ทำเสร็จ</div>');
+  }
+
+  const byDue = (a, b) => (a.dueDate + (a.dueTime || '99')).localeCompare(b.dueDate + (b.dueTime || '99'));
+  const groups = [
+    ['เลยกำหนด', open.filter((x) => x.dueDate && x.dueDate < t).sort(byDue)],
+    ['วันนี้', open.filter((x) => x.dueDate === t).sort(byDue)],
+    ['กำลังจะถึง', open.filter((x) => x.dueDate && x.dueDate > t).sort(byDue)],
+    ['ไม่ระบุวัน', open.filter((x) => !x.dueDate).sort((a, b) => millis(b.createdAt) - millis(a.createdAt))],
+  ];
+  const body = groups.filter(([, list]) => list.length).map(([title, list]) => `
+    <h3 class="section-title">${title} <span class="count">${list.length}</span></h3>
+    ${list.map((x) => renderTaskItem(x)).join('')}`).join('');
+  return seg + (body || '<div class="empty">ไม่มีงานค้าง 🎉<br>พิมพ์งานในช่องด้านบน หรือกดปุ่ม ＋ เพื่อใส่รายละเอียด</div>');
+}
+
+function openTaskForm(task = null, preset = {}) {
+  const x = task || { title: preset.title || '', notes: '', dueDate: preset.dueDate || '', dueTime: '', customerId: '', done: false };
+  const customers = [...state.customers.values()].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'th'));
+  openSheet(task ? 'แก้ไขงาน' : 'งานใหม่', `
+    <form id="task-form" class="form-grid" data-id="${task ? task.id : ''}" novalidate>
+      <label>งานที่ต้องทำ <span class="req">*</span><input name="title" value="${esc(x.title)}" placeholder="เช่น เตรียมเอกสารเคลม คุณสมชาย"></label>
+      <label>โน้ต / รายละเอียด<textarea name="notes" rows="4" placeholder="จดรายละเอียดเพิ่มเติม">${esc(x.notes)}</textarea></label>
+      <div class="field-row">
+        <label>วันที่ต้องทำ<input name="dueDate" type="date" value="${esc(x.dueDate)}"></label>
+        <label>เวลา<input name="dueTime" type="time" value="${esc(x.dueTime)}"></label>
+      </div>
+      <label>ลูกค้าที่เกี่ยวข้อง
+        <select name="customerId">
+          <option value="">— ไม่ระบุ —</option>
+          ${customers.map((c) => `<option value="${c.id}" ${x.customerId === c.id ? 'selected' : ''}>${esc(c.name)}${c.phone ? ` (${esc(c.phone)})` : ''}</option>`).join('')}
+        </select>
+      </label>
+      ${task ? `<label class="checkline"><input type="checkbox" name="done" ${x.done ? 'checked' : ''}> ทำเสร็จแล้ว</label>` : ''}
+      <p class="hint">ถ้าใส่วันที่ งานจะขึ้นในปฏิทินและหน้าแจ้งเตือนด้วย</p>
+      <p id="form-error" class="error" hidden></p>
+      <div class="sheet-foot">
+        ${task ? '<button type="button" class="btn danger" data-action="delete-task">ลบ</button>' : ''}
+        <button type="submit" class="btn primary">บันทึก</button>
+      </div>
+    </form>`);
+  if (!task) $('#task-form').elements.title.focus();
+}
+
+function saveTask(form) {
+  const f = form.elements;
+  const errEl = $('#form-error');
+  const data = {
+    title: f.title.value.trim(),
+    notes: f.notes.value.trim(),
+    dueDate: f.dueDate.value,
+    dueTime: f.dueDate.value ? f.dueTime.value : '',
+    customerId: f.customerId.value,
+  };
+  if (!data.title) { errEl.textContent = 'กรุณาพิมพ์งานที่ต้องทำ'; errEl.hidden = false; f.title.focus(); return; }
+  const id = form.dataset.id;
+  if (id) {
+    const done = f.done.checked;
+    const prev = state.tasks.find((x) => x.id === id);
+    write(updateDoc(doc(db, 'tasks', id), {
+      ...data, done, ...(done !== !!prev?.done ? { doneAt: done ? serverTimestamp() : null } : {}), updatedAt: serverTimestamp(),
+    }));
+  } else {
+    write(addDoc(collection(db, 'tasks'), { ...data, done: false, doneAt: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+  }
+  closeSheet();
+  toast('บันทึกงานแล้ว');
 }
 
 /* ---------- สรุปแจ้งเตือน ---------- */
@@ -613,7 +802,7 @@ function customerFields(c = {}, prefix = '') {
 
 function openApptForm(appt = null, preset = {}) {
   const a = appt || {
-    date: preset.date || state.selected, time: '', topic: TOPICS[0], location: '', notes: '', status: 'pending', customerId: preset.customerId || '',
+    date: preset.date || state.selected, time: preset.time || '', topic: TOPICS[0], location: '', notes: '', status: 'pending', customerId: preset.customerId || '',
   };
   // เรื่องที่พิมพ์เอง (ไม่อยู่ในรายการ) → เลือก "อื่นๆ" แล้วใส่ข้อความเดิมไว้ในช่องพิมพ์
   const customTopic = a.topic && !TOPICS.includes(a.topic) ? a.topic : '';
@@ -642,7 +831,7 @@ function openApptForm(appt = null, preset = {}) {
         <input type="hidden" name="customerId" value="${esc(a.customerId || '')}">
         <div id="cust-existing" ${mode === 'existing' ? '' : 'hidden'} style="margin-top:8px">
           <div id="picked" class="picked" ${picked ? '' : 'hidden'}>
-            <span><strong>${esc(picked?.name)}</strong><br><small>${esc(picked?.phone)}</small></span>
+            <span><strong>${esc(picked?.name)}</strong><br>${telLink(picked?.phone)}</span>
             <button type="button" class="btn small" data-action="unpick">เปลี่ยน</button>
           </div>
           <div id="picker" ${picked ? 'hidden' : ''}>
@@ -792,7 +981,7 @@ function openCustomerDetail(id) {
       </div>
       <div class="card">
         <dl>
-          <dt>เบอร์โทร</dt><dd>${esc(c.phone) || '-'}</dd>
+          <dt>เบอร์โทร</dt><dd>${telLink(c.phone) || '-'}</dd>
           <dt>อายุ</dt><dd>${c.age ?? '-'}</dd>
           <dt>ที่อยู่</dt><dd>${esc(c.address) || '-'}</dd>
           <dt>สถานะ</dt><dd><span class="tag s-${c.status || 'prospect'}">${CUSTOMER_STATUS[c.status || 'prospect']}</span></dd>
@@ -961,7 +1150,28 @@ async function handleAction(el, e) {
       state.selected = el.dataset.date;
       render();
       break;
-    case 'new-appt': openApptForm(null, { date: el.dataset.date }); break;
+    case 'new-appt': openApptForm(null, { date: el.dataset.date, time: el.dataset.time }); break;
+    case 'task-view': state.taskView = el.dataset.v; render(); break;
+    case 'edit-task': {
+      const task = state.tasks.find((x) => x.id === id);
+      if (task) openTaskForm(task);
+      break;
+    }
+    case 'toggle-task': {
+      const task = state.tasks.find((x) => x.id === id);
+      if (!task) break;
+      const done = !task.done;
+      write(updateDoc(doc(db, 'tasks', id), { done, doneAt: done ? serverTimestamp() : null, updatedAt: serverTimestamp() }));
+      toast(done ? 'ทำเสร็จแล้ว ✓' : 'ย้ายกลับไปงานที่ยังไม่เสร็จ');
+      break;
+    }
+    case 'delete-task': {
+      if (!confirm('ลบงานนี้?')) return;
+      write(deleteDoc(doc(db, 'tasks', $('#task-form').dataset.id)));
+      closeSheet();
+      toast('ลบงานแล้ว');
+      break;
+    }
     case 'new-appt-for': openApptForm(null, { customerId: id, date: state.selected >= todayStr() ? state.selected : todayStr() }); break;
     case 'edit-appt': {
       const a = state.appointments.find((x) => x.id === id);
@@ -988,7 +1198,7 @@ async function handleAction(el, e) {
       const c = state.customers.get(id);
       const form = $('#appt-form');
       form.elements.customerId.value = id;
-      $('#picked').querySelector('span').innerHTML = `<strong>${esc(c.name)}</strong><br><small>${esc(c.phone)}</small>`;
+      $('#picked').querySelector('span').innerHTML = `<strong>${esc(c.name)}</strong><br>${telLink(c.phone)}`;
       $('#picked').hidden = false;
       $('#picker').hidden = true;
       break;
@@ -1070,6 +1280,7 @@ document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('c
 
 $('#fab').addEventListener('click', () => {
   if (state.tab === 'customers') openCustomerForm();
+  else if (state.tab === 'tasks') openTaskForm(null, { title: $('#task-quick')?.elements.title.value.trim() });
   else openApptForm(null, { date: state.calMode === 'month' || state.calMode === 'day' ? state.selected : todayStr() });
 });
 
@@ -1094,6 +1305,19 @@ document.addEventListener('change', (e) => {
 document.addEventListener('submit', (e) => {
   if (e.target.id === 'appt-form') { e.preventDefault(); saveAppt(e.target); }
   if (e.target.id === 'customer-form') { e.preventDefault(); saveCustomer(e.target); }
+  if (e.target.id === 'task-form') { e.preventDefault(); saveTask(e.target); }
+  if (e.target.id === 'task-quick') {
+    e.preventDefault();
+    const input = e.target.elements.title;
+    const title = input.value.trim();
+    if (!title) { input.focus(); return; }
+    write(addDoc(collection(db, 'tasks'), {
+      title, notes: '', dueDate: '', dueTime: '', customerId: '', done: false, doneAt: null,
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    }));
+    input.value = '';
+    toast('เพิ่มงานแล้ว');
+  }
 });
 
 document.addEventListener('keydown', (e) => {
