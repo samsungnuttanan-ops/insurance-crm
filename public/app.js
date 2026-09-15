@@ -344,6 +344,7 @@ function subscribeData(retried = false) {
     state.tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     state.loaded.tasks = true;
     render();
+    refreshOpenDetail();
   }, onError));
 }
 
@@ -368,6 +369,7 @@ function render() {
   $('#page-title').textContent = TITLES[state.tab];
   $('#page-sub').textContent = fmtDayLong.format(new Date());
   $('#fab').setAttribute('aria-label', FAB_LABELS[state.tab]);
+  $('#fab').hidden = state.tab === 'calendar'; // ในปฏิทินให้แตะวันที่แทน
 
   const s = buildSummary();
   const count = s.today.length + s.overdue.length;
@@ -494,8 +496,9 @@ function renderCalendar() {
       <span><i style="background:var(--done)"></i>เสร็จแล้ว</span>
       <span><i style="background:var(--premium)"></i>ครบกำหนดเบี้ย</span>
       <span><i style="background:var(--contact)"></i>วันติดต่อลูกค้า</span>
-      <span><i style="background:var(--task)"></i>งาน</span>
-    </div>`;
+      <span><i style="background:var(--task)"></i>กิจกรรม</span>
+    </div>
+    <p class="cal-hint">${mode === 'day' ? 'แตะช่องเวลาเพื่อเพิ่มนัดหมายหรือกิจกรรม' : 'แตะวันที่เพื่อเพิ่มนัดหมายหรือกิจกรรม'}</p>`;
   if (mode === 'month') return toolbar + renderMonth();
   if (mode === 'week') return toolbar + renderWeek();
   return toolbar + renderTimeline(state.selected);
@@ -549,10 +552,9 @@ function renderWeek() {
     const conflicts = conflictIds(dayEvents);
     html += `
       <div class="week-day">
-        <h3 class="${s === t ? 'today' : ''}">
-          <span>${fmtDayLong.format(parse(s))}</span>
-          <button class="btn ghost small add" data-action="add-at" data-date="${s}">＋ เพิ่ม</button>
-        </h3>
+        <button type="button" class="week-head ${s === t ? 'today' : ''}" data-action="add-at" data-date="${s}">
+          <span>${fmtDayLong.format(parse(s))}</span><span class="plus" aria-hidden="true">＋</span>
+        </button>
         ${dayEvents.length ? dayEvents.map((e) => renderEvent(e, { conflicts })).join('') : '<div class="sub" style="color:var(--muted);font-size:13px;padding:0 0 4px">ว่าง</div>'}
       </div>`;
   }
@@ -566,7 +568,7 @@ function renderDay(s) {
   if (conflicts.size) html += `<div class="conflict-note">⚠️ มีรายการที่เวลาใกล้กันไม่ถึง ${CONFLICT_MINUTES} นาที ลองเลื่อนนัดดูครับ</div>`;
   html += events.length
     ? events.map((e) => renderEvent(e, { conflicts })).join('')
-    : `<div class="empty">ยังไม่มีนัดหรืองานในวันนี้<br><button class="btn primary" style="margin-top:10px" data-action="add-at" data-date="${s}">＋ เพิ่มนัด / งาน</button></div>`;
+    : '<div class="empty">ยังไม่มีนัดหมายหรือกิจกรรม</div>';
   return html;
 }
 
@@ -598,7 +600,7 @@ function renderTimeline(s) {
         <div class="slot-body">
           ${inHour.map((e) => renderEvent(e, { conflicts })).join('')}
           <button type="button" class="slot-add ${inHour.length ? 'compact' : ''}" data-action="add-at" data-date="${s}" data-time="${hh}:00"
-            aria-label="เพิ่มนัดหรืองาน ${hh}:00">${inHour.length ? '＋' : '＋ ว่าง — แตะเพื่อเพิ่ม'}</button>
+            aria-label="เพิ่มนัดหมายหรือกิจกรรม ${hh}:00"></button>
         </div>
       </div>`;
   }
@@ -697,27 +699,24 @@ function renderTaskList() {
   return seg + (body || '<div class="empty">ไม่มีงานค้าง 🎉<br>พิมพ์งานในช่องด้านบน หรือกดปุ่ม ＋ เพื่อใส่รายละเอียด</div>');
 }
 
-// เลือกว่าจะเพิ่มอะไรลงวัน/เวลานี้ในปฏิทิน
-function openAddChooser(date, time = '') {
-  const when = `${fmtDayLong.format(parse(date))}${time ? ` เวลา ${time}` : ''}`;
-  openSheet('เพิ่มลงปฏิทิน', `
-    <p class="hint" style="margin:0 0 14px">${when}</p>
-    <div class="chooser">
+// แตะวันที่ (หรือช่องเวลา) → เลือก "นัดหมายลูกค้า" หรือ "กิจกรรม" + ดูรายการของวันนั้น
+function openDaySheet(date, time = '') {
+  const events = time ? [] : eventsInRange(date, date);
+  const conflicts = conflictIds(events);
+  const title = `${fmtDayLong.format(parse(date))}${time ? ` · ${time} น.` : ''}`;
+  openSheet(title, `
+    <div class="add-two">
       <button type="button" data-action="choose-appt" data-date="${date}" data-time="${time}">
-        <span class="chooser-icon appt">👤</span>
-        <span><strong>นัดลูกค้า</strong><small>ลูกค้าโทรนัด / เสนอแบบประกัน / เซ็นสัญญา</small></span>
+        <span class="add-icon appt">👤</span>นัดหมายลูกค้า
       </button>
-      ${Object.entries(TASK_TYPES).map(([k, v]) => `
-        <button type="button" data-action="choose-task" data-type="${k}" data-date="${date}" data-time="${time}">
-          <span class="chooser-icon task">${v.icon}</span>
-          <span><strong>${v.label}</strong><small>${{
-            general: 'สิ่งที่ต้องทำ จดโน้ตงาน',
-            meeting: 'ประชุมทีม / ประชุมบริษัท / อบรม',
-            errand: 'ต้องไปที่ไหน เช่น ธนาคาร สาขา บ้านลูกค้า',
-            document: 'เตรียม / ส่งเอกสาร เคลม ใบเสนอราคา',
-          }[k]}</small></span>
-        </button>`).join('')}
-    </div>`);
+      <button type="button" data-action="choose-task" data-date="${date}" data-time="${time}">
+        <span class="add-icon task">📝</span>กิจกรรม
+      </button>
+    </div>
+    ${time ? '' : `
+      <h3 class="section-title">รายการวันนี้ <span class="count">${events.length}</span></h3>
+      ${events.length ? events.map((e) => renderEvent(e, { conflicts })).join('') : '<div class="empty">ยังไม่มีรายการ</div>'}`}`);
+  if (!time) daySheetFor = date;
 }
 
 function openTaskForm(task = null, preset = {}) {
@@ -731,7 +730,7 @@ function openTaskForm(task = null, preset = {}) {
     general: 'เช่น โทรตามเอกสารคุณสมชาย', meeting: 'เช่น ประชุมทีมประจำเดือน',
     errand: 'เช่น ไปธนาคาร / ไปสาขา', document: 'เช่น ส่งเอกสารเคลม',
   };
-  openSheet(task ? 'แก้ไขงาน' : `${TASK_TYPES[type].icon} ${TASK_TYPES[type].label}`, `
+  openSheet(task ? 'แก้ไขกิจกรรม' : 'กิจกรรมใหม่', `
     <form id="task-form" class="form-grid" data-id="${task ? task.id : ''}" novalidate>
       <div>
         <label>ประเภท</label>
@@ -830,8 +829,15 @@ function renderSummary(s) {
  * ==================================================================== */
 const sheet = $('#sheet');
 let detailOpenFor = null; // id ลูกค้าที่เปิดหน้ารายละเอียดอยู่ (ไว้รีเฟรชเมื่อข้อมูลเปลี่ยน)
+let daySheetFor = null; // วันที่ที่เปิดหน้า "แตะวันที่" อยู่
 
 function refreshOpenDetail() {
+  if (sheet.open && daySheetFor) {
+    const top = sheet.scrollTop;
+    openDaySheet(daySheetFor);
+    sheet.scrollTop = top;
+    return;
+  }
   if (!sheet.open || !detailOpenFor) return;
   if (!state.customers.has(detailOpenFor)) { closeSheet(); return; }
   const top = sheet.scrollTop;
@@ -841,6 +847,7 @@ function refreshOpenDetail() {
 
 function openSheet(title, bodyHtml) {
   detailOpenFor = null;
+  daySheetFor = null;
   sheet.innerHTML = `
     <div class="sheet-head">
       <h2>${title}</h2>
@@ -850,8 +857,8 @@ function openSheet(title, bodyHtml) {
   if (!sheet.open) sheet.showModal();
   sheet.scrollTop = 0;
 }
-function closeSheet() { detailOpenFor = null; if (sheet.open) sheet.close(); }
-sheet.addEventListener('close', () => { detailOpenFor = null; });
+function closeSheet() { detailOpenFor = null; daySheetFor = null; if (sheet.open) sheet.close(); }
+sheet.addEventListener('close', () => { detailOpenFor = null; daySheetFor = null; });
 sheet.addEventListener('click', (e) => { if (e.target === sheet) closeSheet(); });
 
 /* ---------- ฟอร์มนัดหมาย ---------- */
@@ -1210,15 +1217,13 @@ async function handleAction(el, e) {
       break;
     }
     case 'select-day':
-      if (state.selected === el.dataset.date) { state.calMode = 'day'; }
       state.selected = el.dataset.date;
       render();
+      openDaySheet(el.dataset.date);
       break;
-    case 'add-at': openAddChooser(el.dataset.date, el.dataset.time || ''); break;
+    case 'add-at': openDaySheet(el.dataset.date, el.dataset.time || ''); break;
     case 'choose-appt': openApptForm(null, { date: el.dataset.date, time: el.dataset.time }); break;
-    case 'choose-task':
-      openTaskForm(null, { type: el.dataset.type, dueDate: el.dataset.date, dueTime: el.dataset.time });
-      break;
+    case 'choose-task': openTaskForm(null, { dueDate: el.dataset.date, dueTime: el.dataset.time }); break;
     case 'task-type': {
       const form = $('#task-form');
       form.elements.type.value = el.dataset.v;
@@ -1355,7 +1360,7 @@ document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('c
 $('#fab').addEventListener('click', () => {
   if (state.tab === 'customers') openCustomerForm();
   else if (state.tab === 'tasks') openTaskForm(null, { title: $('#task-quick')?.elements.title.value.trim() });
-  else openAddChooser(state.tab === 'calendar' && state.calMode !== 'week' ? state.selected : todayStr());
+  else openDaySheet(todayStr());
 });
 
 document.addEventListener('input', (e) => {
