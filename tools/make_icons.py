@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 OUT = Path(__file__).resolve().parent.parent / "public" / "icons"
-TEAL = (15, 118, 110, 255)
+BLUE = (20, 40, 160, 255)  # #1428a0
 WHITE = (255, 255, 255, 255)
 SS = 4  # วาดใหญ่แล้วย่อ ให้ขอบเนียน
 
@@ -14,10 +14,10 @@ def draw_icon(size: int, maskable: bool) -> Image.Image:
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     if maskable:
-        d.rectangle([0, 0, s, s], fill=TEAL)
+        d.rectangle([0, 0, s, s], fill=BLUE)
         scale = 0.62  # อยู่ในพื้นที่ปลอดภัย 80%
     else:
-        d.rounded_rectangle([0, 0, s, s], radius=int(s * 0.22), fill=TEAL)
+        d.rounded_rectangle([0, 0, s, s], radius=int(s * 0.22), fill=BLUE)
         scale = 0.74
 
     cx, cy = s / 2, s / 2
@@ -43,9 +43,9 @@ def draw_icon(size: int, maskable: bool) -> Image.Image:
         (cx - w * 0.05, top + h * 0.68),
         (cx + w * 0.27, top + h * 0.33),
     ]
-    d.line(check, fill=TEAL, width=lw, joint="curve")
+    d.line(check, fill=BLUE, width=lw, joint="curve")
     for x, y in (check[0], check[-1]):
-        d.ellipse([x - lw / 2, y - lw / 2, x + lw / 2, y + lw / 2], fill=TEAL)
+        d.ellipse([x - lw / 2, y - lw / 2, x + lw / 2, y + lw / 2], fill=BLUE)
     return img.resize((size, size), Image.LANCZOS)
 
 

@@ -322,6 +322,7 @@ const TITLES = { calendar: 'ปฏิทิน', customers: 'ลูกค้า'
 function render() {
   document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.tab));
   $('#page-title').textContent = TITLES[state.tab];
+  $('#page-sub').textContent = fmtDayLong.format(new Date());
   $('#fab').setAttribute('aria-label', state.tab === 'customers' ? 'เพิ่มลูกค้า' : 'เพิ่มนัดหมาย');
 
   const s = buildSummary();
