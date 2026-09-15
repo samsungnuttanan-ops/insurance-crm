@@ -29,7 +29,9 @@ const CUSTOMER_STATUS = {
   not_interested: 'ไม่สนใจ',
 };
 const APPT_STATUS = { pending: 'รอพบ', done: 'เสร็จแล้ว', cancelled: 'ยกเลิก' };
-const TOPICS = ['เสนอแบบประกัน', 'เซ็นสัญญา', 'เก็บเบี้ย', 'ติดตาม', 'อื่นๆ'];
+const WALK_IN = 'ลูกค้าวอล์กอินสำนักงาน';
+const OTHER_TOPIC = 'อื่นๆ';
+const TOPICS = ['เสนอแบบประกัน', 'เซ็นสัญญา', 'เก็บเบี้ย', 'ติดตาม', WALK_IN, OTHER_TOPIC];
 const FREQ = {
   monthly: { label: 'รายเดือน', months: 1 },
   quarterly: { label: 'ราย 3 เดือน', months: 3 },
@@ -612,6 +614,9 @@ function openApptForm(appt = null, preset = {}) {
   const a = appt || {
     date: preset.date || state.selected, time: '', topic: TOPICS[0], location: '', notes: '', status: 'pending', customerId: preset.customerId || '',
   };
+  // เรื่องที่พิมพ์เอง (ไม่อยู่ในรายการ) → เลือก "อื่นๆ" แล้วใส่ข้อความเดิมไว้ในช่องพิมพ์
+  const customTopic = a.topic && !TOPICS.includes(a.topic) ? a.topic : '';
+  const topicChoice = customTopic ? OTHER_TOPIC : (a.topic || TOPICS[0]);
   const picked = a.customerId && state.customers.get(a.customerId);
   const mode = picked || appt ? 'existing' : (state.customers.size ? 'existing' : 'new');
 
@@ -654,7 +659,10 @@ function openApptForm(appt = null, preset = {}) {
         <label>เวลา <span class="req">*</span><input name="time" type="time" value="${esc(a.time)}" required></label>
       </div>
       <label>เรื่อง
-        <select name="topic">${TOPICS.map((t) => `<option ${a.topic === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <select name="topic">${TOPICS.map((t) => `<option ${topicChoice === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      </label>
+      <label id="topic-other" ${topicChoice === OTHER_TOPIC ? '' : 'hidden'}>ระบุเรื่อง <span class="req">*</span>
+        <input name="topicOther" value="${esc(customTopic)}" placeholder="พิมพ์เรื่องที่นัด">
       </label>
       <label>สถานที่<input name="location" value="${esc(a.location)}" placeholder="เช่น ร้านกาแฟหน้าบริษัท / บ้านลูกค้า"></label>
       <label>หมายเหตุ<textarea name="notes" rows="3">${esc(a.notes)}</textarea></label>
@@ -706,7 +714,7 @@ async function saveAppt(form) {
   const data = {
     date: f.date.value,
     time: f.time.value,
-    topic: f.topic.value,
+    topic: f.topic.value === OTHER_TOPIC ? f.topicOther.value.trim() : f.topic.value,
     location: f.location.value.trim(),
     notes: f.notes.value.trim(),
     status: f.status.value,
@@ -719,6 +727,7 @@ async function saveAppt(form) {
     return show('กรุณาเลือกลูกค้า');
   }
   if (!data.date || !data.time) return show('กรุณาเลือกวันที่และเวลา');
+  if (!data.topic) { f.topicOther.focus(); return show('กรุณาพิมพ์เรื่องที่นัด'); }
 
   if (data.status === 'pending') {
     const mins = toMinutes(data.time);
@@ -1070,6 +1079,15 @@ document.addEventListener('input', (e) => {
   } else if (e.target.id === 'picker-q') {
     renderPicker(e.target.value);
   }
+});
+
+document.addEventListener('change', (e) => {
+  if (e.target.name !== 'topic' || !e.target.closest('#appt-form')) return;
+  const form = e.target.form;
+  const isOther = e.target.value === OTHER_TOPIC;
+  $('#topic-other').hidden = !isOther;
+  if (isOther) form.elements.topicOther.focus();
+  if (e.target.value === WALK_IN && !form.elements.location.value.trim()) form.elements.location.value = 'สำนักงาน';
 });
 
 document.addEventListener('submit', (e) => {
