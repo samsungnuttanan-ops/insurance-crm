@@ -29,6 +29,7 @@ const CUSTOMER_STATUS = {
   not_interested: 'ไม่สนใจ',
 };
 const APPT_STATUS = { pending: 'รอพบ', done: 'เสร็จแล้ว', cancelled: 'ยกเลิก' };
+const APP_VERSION = '1.8'; // เปลี่ยนพร้อม CACHE ใน firebase-messaging-sw.js
 const WALK_IN = 'ลูกค้าวอล์กอินสำนักงาน';
 const OTHER_TOPIC = 'อื่นๆ';
 const TOPICS = ['เสนอแบบประกัน', 'เซ็นสัญญา', 'เก็บเบี้ย', 'ติดตาม', WALK_IN, OTHER_TOPIC];
@@ -298,6 +299,7 @@ onAuthStateChanged(auth, (user) => {
   unsubscribers.forEach((u) => u());
   unsubscribers = [];
   if (!user) {
+    closeSheet();
     $('#app').hidden = true;
     $('#login').hidden = false;
     return;
@@ -370,6 +372,11 @@ function render() {
   $('#page-sub').textContent = fmtDayLong.format(new Date());
   $('#fab').setAttribute('aria-label', FAB_LABELS[state.tab]);
   $('#fab').hidden = state.tab === 'calendar'; // ในปฏิทินให้แตะวันที่แทน
+  $('#topbar-actions').innerHTML = `
+    ${state.tab === 'calendar' ? '<button class="btn small" data-action="go-today">วันนี้</button>' : ''}
+    <button class="icon-btn" data-action="open-settings" aria-label="ตั้งค่า" title="ตั้งค่า">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>`;
 
   const s = buildSummary();
   const count = s.today.length + s.overdue.length;
@@ -397,10 +404,6 @@ function render() {
     if ($('#task-quick')) $('#task-results').innerHTML = renderTaskList();
     else view.innerHTML = renderTasks();
   } else view.innerHTML = renderSummary(s);
-
-  $('#topbar-actions').innerHTML = state.tab === 'calendar'
-    ? '<button class="btn small" data-action="go-today">วันนี้</button>'
-    : '';
 }
 
 /* ---------- รายการ (ใช้ร่วมกันทุกหน้า) ---------- */
@@ -799,29 +802,63 @@ function renderSummary(s) {
     <h3 class="section-title">${title} <span class="count">${evs.length}</span></h3>
     ${evs.length ? evs.map((e) => renderEvent(e, { showDate: true })).join('') : `<div class="empty">${emptyText}</div>`}`;
 
-  const perm = 'Notification' in self ? Notification.permission : 'unsupported';
-  const pushOn = perm === 'granted' && localStorage.getItem('pushEnabled') === '1';
-  const pushCard = `
-    <div class="card">
-      <strong>แจ้งเตือนบนมือถือเครื่องนี้</strong>
-      <p class="hint">เด้งเตือนเวลา 18:00 ของวันก่อนนัด 1 วัน (อาจช้ากว่าเวลาจริงราว 5–15 นาที)</p>
-      ${perm === 'unsupported'
-        ? '<p class="error">เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน</p>'
-        : perm === 'denied'
-          ? '<p class="error">การแจ้งเตือนถูกปิดไว้ ให้เปิดในการตั้งค่าเบราว์เซอร์/แอป แล้วกลับมากดอีกครั้ง</p>'
-          : pushOn
-            ? '<p style="margin:8px 0 0;color:var(--done);font-weight:600">✓ เปิดแจ้งเตือนแล้ว</p><button class="btn small" style="margin-top:8px" data-action="test-push">ทดสอบแจ้งเตือนในเครื่อง</button>'
-            : '<button class="btn primary" style="margin-top:8px" data-action="enable-push">เปิดแจ้งเตือน</button>'}
-    </div>`;
-
   return `
-    ${pushCard}
     ${section('เลยกำหนด', s.overdue, 'ไม่มีรายการค้าง 👍')}
     ${section('วันนี้', s.today, 'วันนี้ไม่มีรายการ')}
-    ${section(`ใกล้ถึง (${UPCOMING_DAYS} วัน)`, s.upcoming, 'ไม่มีรายการในสัปดาห์นี้')}
-    <div style="margin-top:28px;text-align:center">
-      <button class="btn ghost" data-action="logout">ออกจากระบบ</button>
-    </div>`;
+    ${section(`ใกล้ถึง (${UPCOMING_DAYS} วัน)`, s.upcoming, 'ไม่มีรายการในสัปดาห์นี้')}`;
+}
+
+/* ---------- ตั้งค่า ---------- */
+let settingsOpen = false;
+
+function openSettings() {
+  const perm = 'Notification' in self ? Notification.permission : 'unsupported';
+  const pushOn = perm === 'granted' && localStorage.getItem('pushEnabled') === '1';
+  const username = (auth.currentUser?.email || '').split('@')[0] || '-';
+  const pushProblem = perm === 'unsupported'
+    ? 'เครื่องนี้ไม่รองรับการแจ้งเตือน'
+    : perm === 'denied' ? 'ถูกปิดไว้ — เปิดได้ที่การตั้งค่ามือถือ แล้วกลับมาหน้านี้' : '';
+  const pushBody = pushProblem
+    ? ''
+    : pushOn
+      ? '<span class="status-on">✓ เปิดอยู่</span><button class="btn small" data-action="test-push">ทดสอบ</button>'
+      : '<button class="btn primary small" data-action="enable-push">เปิด</button>';
+
+  openSheet('ตั้งค่า', `
+    <div class="settings">
+      <h3 class="settings-label">บัญชี</h3>
+      <div class="settings-group">
+        <div class="settings-row">
+          <span class="settings-icon">👤</span>
+          <span class="settings-text"><strong>${esc(username)}</strong><small>ชื่อผู้ใช้ที่เข้าระบบอยู่</small></span>
+        </div>
+      </div>
+
+      <h3 class="settings-label">แจ้งเตือน</h3>
+      <div class="settings-group">
+        <div class="settings-row">
+          <span class="settings-icon">🔔</span>
+          <span class="settings-text"><strong>แจ้งเตือนบนมือถือเครื่องนี้</strong><small>เด้งเตือน 18:00 ก่อนวันนัด 1 วัน</small>${pushProblem ? `<small class="error">${pushProblem}</small>` : ''}</span>
+          ${pushBody ? `<span class="settings-end">${pushBody}</span>` : ''}
+        </div>
+      </div>
+
+      <h3 class="settings-label">แอป</h3>
+      <div class="settings-group">
+        <button type="button" class="settings-row" data-action="update-app">
+          <span class="settings-icon">🔄</span>
+          <span class="settings-text"><strong>โหลดแอปเวอร์ชันล่าสุด</strong><small>ใช้เมื่อยังไม่เห็นหน้าตาหรือฟังก์ชันใหม่ · เวอร์ชัน ${APP_VERSION}</small></span>
+        </button>
+      </div>
+
+      <div class="settings-group danger-group">
+        <button type="button" class="settings-row" data-action="logout">
+          <span class="settings-icon">🚪</span>
+          <span class="settings-text"><strong>ออกจากระบบ</strong></span>
+        </button>
+      </div>
+    </div>`);
+  settingsOpen = true;
 }
 
 /* ====================================================================
@@ -848,6 +885,7 @@ function refreshOpenDetail() {
 function openSheet(title, bodyHtml) {
   detailOpenFor = null;
   daySheetFor = null;
+  settingsOpen = false;
   sheet.innerHTML = `
     <div class="sheet-head">
       <h2>${title}</h2>
@@ -857,8 +895,8 @@ function openSheet(title, bodyHtml) {
   if (!sheet.open) sheet.showModal();
   sheet.scrollTop = 0;
 }
-function closeSheet() { detailOpenFor = null; daySheetFor = null; if (sheet.open) sheet.close(); }
-sheet.addEventListener('close', () => { detailOpenFor = null; daySheetFor = null; });
+function closeSheet() { detailOpenFor = null; daySheetFor = null; settingsOpen = false; if (sheet.open) sheet.close(); }
+sheet.addEventListener('close', () => { detailOpenFor = null; daySheetFor = null; settingsOpen = false; });
 sheet.addEventListener('click', (e) => { if (e.target === sheet) closeSheet(); });
 
 /* ---------- ฟอร์มนัดหมาย ---------- */
@@ -1190,7 +1228,7 @@ async function enablePush() {
     console.error(err);
     toast(err.message === 'unsupported' ? 'เครื่องนี้ไม่รองรับการแจ้งเตือน' : 'เปิดแจ้งเตือนไม่สำเร็จ ลองใหม่อีกครั้ง');
   }
-  render();
+  if (sheet.open && settingsOpen) openSettings();
 }
 
 async function refreshPushToken() {
@@ -1334,6 +1372,18 @@ async function handleAction(el, e) {
       if (confirm('ออกจากระบบ?')) await signOut(auth);
       break;
     case 'logout-now': await signOut(auth); break;
+    case 'open-settings': openSettings(); break;
+    case 'update-app': {
+      toast('กำลังโหลดเวอร์ชันล่าสุด…');
+      try {
+        const regs = await navigator.serviceWorker?.getRegistrations() || [];
+        await Promise.all(regs.map((r) => r.update()));
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      } catch (err) { console.warn('update-app', err); }
+      location.reload();
+      break;
+    }
     case 'retry-load':
       state.loadError = '';
       render();
