@@ -29,7 +29,7 @@ const CUSTOMER_STATUS = {
   not_interested: 'ไม่สนใจ',
 };
 const APPT_STATUS = { pending: 'รอพบ', done: 'เสร็จแล้ว', cancelled: 'ยกเลิก' };
-const APP_VERSION = '1.8'; // เปลี่ยนพร้อม CACHE ใน firebase-messaging-sw.js
+const APP_VERSION = '1.9'; // เปลี่ยนพร้อม CACHE ใน firebase-messaging-sw.js
 const WALK_IN = 'ลูกค้าวอล์กอินสำนักงาน';
 const OTHER_TOPIC = 'อื่นๆ';
 const TOPICS = ['เสนอแบบประกัน', 'เซ็นสัญญา', 'เก็บเบี้ย', 'ติดตาม', WALK_IN, OTHER_TOPIC];
@@ -300,12 +300,15 @@ onAuthStateChanged(auth, (user) => {
   unsubscribers = [];
   if (!user) {
     closeSheet();
+    if (lockDialog.open) lockDialog.close();
+    pinFlow = null;
     $('#app').hidden = true;
     $('#login').hidden = false;
     return;
   }
   $('#login').hidden = true;
   $('#app').hidden = false;
+  maybeLock();
   subscribeData();
   applyUrlParams();
   render();
@@ -834,6 +837,22 @@ function openSettings() {
         </div>
       </div>
 
+      <h3 class="settings-label">ความปลอดภัย</h3>
+      <div class="settings-group">
+        <div class="settings-row">
+          <span class="settings-icon">🔒</span>
+          <span class="settings-text"><strong>ล็อกแอปด้วย PIN</strong><small>ถาม PIN เมื่อออกจากแอปเกิน 5 นาที · เฉพาะเครื่องนี้</small></span>
+          <span class="settings-end">${hasPin()
+            ? '<span class="status-on">✓ เปิดอยู่</span>'
+            : '<button class="btn primary small" data-action="pin-set">ตั้ง PIN</button>'}</span>
+        </div>
+        ${hasPin() ? `
+          <div class="settings-sub">
+            <button type="button" class="btn small" data-action="pin-change">เปลี่ยน PIN</button>
+            <button type="button" class="btn small danger" data-action="pin-disable">ปิดการล็อก</button>
+          </div>` : ''}
+      </div>
+
       <h3 class="settings-label">แจ้งเตือน</h3>
       <div class="settings-group">
         <div class="settings-row">
@@ -1238,6 +1257,160 @@ async function refreshPushToken() {
 }
 
 /* ====================================================================
+ * ล็อกแอปด้วย PIN (เก็บเฉพาะในเครื่องนี้ แยกตามบัญชี)
+ * ==================================================================== */
+const PIN_LENGTH = 4;
+const LOCK_AFTER_MS = 5 * 60 * 1000; // ออกจากแอปเกินนี้ต้องใส่ PIN
+const PIN_MAX_TRIES = 5; // ผิดครบนี้ → ออกจากระบบและลบ PIN
+const lockDialog = $('#lock');
+let pinFlow = null; // { mode: 'unlock'|'set'|'change'|'disable', step, first, entered, root }
+
+function store(key, value) {
+  try {
+    if (value === undefined) return localStorage.getItem(key);
+    if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value);
+  } catch { /* เบราว์เซอร์ไม่ให้ใช้ storage */ }
+  return null;
+}
+const pinKey = (suffix = '') => `pin${suffix}:${auth.currentUser?.uid}`;
+function pinRecord() { try { return JSON.parse(store(pinKey())); } catch { return null; } }
+const hasPin = () => !!(auth.currentUser && pinRecord());
+
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+async function hashPin(pin, salt) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+  return b64(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 150000 }, key, 256));
+}
+async function savePin(pin) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  store(pinKey(), JSON.stringify({ salt: b64(salt), hash: await hashPin(pin, salt) }));
+  store(pinKey('Tries'), null);
+  store('lastHidden', String(Date.now()));
+}
+async function checkPin(pin) {
+  const rec = pinRecord();
+  return !!rec && (await hashPin(pin, unb64(rec.salt))) === rec.hash;
+}
+function clearPin() { store(pinKey(), null); store(pinKey('Tries'), null); }
+
+function pinPadHtml(title, message = '') {
+  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'];
+  return `
+    <div class="pinpad">
+      <h2 class="pin-title">${title}</h2>
+      <p class="pin-msg">${message}</p>
+      <div class="pin-dots">${'<i></i>'.repeat(PIN_LENGTH)}</div>
+      <div class="keypad">
+        ${keys.map((k) => (k === ''
+          ? '<span></span>'
+          : `<button type="button" data-pin-key="${k}" aria-label="${k === 'del' ? 'ลบ' : k}">${k === 'del' ? '⌫' : k}</button>`)).join('')}
+      </div>
+    </div>`;
+}
+
+function startPinFlow(mode, root) {
+  const titles = {
+    unlock: 'ใส่ PIN เพื่อเข้าแอป', set: `ตั้ง PIN ${PIN_LENGTH} หลัก`,
+    change: 'ใส่ PIN เดิม', disable: 'ใส่ PIN เพื่อปิดการล็อก',
+  };
+  pinFlow = { mode, step: mode === 'set' ? 'new' : 'verify', first: '', entered: '', root };
+  root.innerHTML = pinPadHtml(titles[mode]);
+}
+
+function setPinScreen(title, message = '', isError = false) {
+  const { root } = pinFlow;
+  pinFlow.entered = '';
+  root.querySelector('.pin-title').textContent = title;
+  const msg = root.querySelector('.pin-msg');
+  msg.textContent = message;
+  msg.classList.toggle('error', isError);
+  root.querySelectorAll('.pin-dots i').forEach((d) => d.classList.remove('on'));
+  if (isError) {
+    const dots = root.querySelector('.pin-dots');
+    dots.classList.remove('shake');
+    void dots.offsetWidth; // เริ่มแอนิเมชันใหม่
+    dots.classList.add('shake');
+  }
+}
+
+async function onPinComplete() {
+  const f = pinFlow;
+  const pin = f.entered;
+  if (f.step === 'verify') {
+    if (await checkPin(pin)) {
+      store(pinKey('Tries'), null);
+      if (f.mode === 'unlock') { unlockApp(); return; }
+      if (f.mode === 'disable') { clearPin(); toast('ปิดการล็อกด้วย PIN แล้ว'); openSettings(); return; }
+      f.step = 'new';
+      setPinScreen(`ตั้ง PIN ใหม่ ${PIN_LENGTH} หลัก`);
+      return;
+    }
+    const tries = Number(store(pinKey('Tries')) || 0) + 1;
+    store(pinKey('Tries'), String(tries));
+    if (tries >= PIN_MAX_TRIES) {
+      clearPin();
+      lockDialog.close();
+      await signOut(auth);
+      toast('ใส่ PIN ผิดหลายครั้ง ออกจากระบบแล้ว');
+      return;
+    }
+    setPinScreen(f.root.querySelector('.pin-title').textContent, `PIN ไม่ถูกต้อง (เหลือ ${PIN_MAX_TRIES - tries} ครั้ง)`, true);
+    return;
+  }
+  if (f.step === 'new') {
+    f.first = pin;
+    f.step = 'confirm';
+    setPinScreen('ยืนยัน PIN อีกครั้ง');
+    return;
+  }
+  if (pin !== f.first) {
+    f.step = 'new';
+    setPinScreen(`ตั้ง PIN ${PIN_LENGTH} หลัก`, 'PIN ไม่ตรงกัน ลองใหม่อีกครั้ง', true);
+    return;
+  }
+  await savePin(pin);
+  toast(f.mode === 'change' ? 'เปลี่ยน PIN แล้ว' : 'ตั้ง PIN แล้ว');
+  openSettings();
+}
+
+function pressPinKey(key) {
+  if (!pinFlow || !pinFlow.root.isConnected) return;
+  const f = pinFlow;
+  if (key === 'del') f.entered = f.entered.slice(0, -1);
+  else if (f.entered.length < PIN_LENGTH) f.entered += key;
+  f.root.querySelectorAll('.pin-dots i').forEach((d, i) => d.classList.toggle('on', i < f.entered.length));
+  if (f.entered.length === PIN_LENGTH) setTimeout(onPinComplete, 120);
+}
+
+function lockApp() {
+  if (lockDialog.open) return;
+  lockDialog.innerHTML = `
+    <div class="lock-inner">
+      <img src="/icons/icon-192.png" alt="" width="56" height="56">
+      <div id="lock-pad"></div>
+      <button type="button" class="lock-forgot" data-action="pin-forgot">ลืม PIN? ออกจากระบบ</button>
+    </div>`;
+  lockDialog.showModal();
+  startPinFlow('unlock', $('#lock-pad'));
+}
+
+function unlockApp() {
+  pinFlow = null;
+  store('lastHidden', String(Date.now()));
+  lockDialog.close();
+}
+
+// ล็อกเมื่อเปิดแอปใหม่ หรือกลับเข้าแอปหลังออกไปเกิน LOCK_AFTER_MS
+function maybeLock() {
+  if (!hasPin() || lockDialog.open) return;
+  const last = Number(store('lastHidden') || 0);
+  if (Date.now() - last > LOCK_AFTER_MS) lockApp();
+}
+
+lockDialog.addEventListener('cancel', (e) => e.preventDefault()); // ปุ่มย้อนกลับ/Esc ปิดหน้าล็อกไม่ได้
+
+/* ====================================================================
  * Event delegation
  * ==================================================================== */
 async function handleAction(el, e) {
@@ -1373,6 +1546,20 @@ async function handleAction(el, e) {
       break;
     case 'logout-now': await signOut(auth); break;
     case 'open-settings': openSettings(); break;
+    case 'pin-set':
+    case 'pin-change':
+    case 'pin-disable': {
+      const mode = action.slice(4);
+      openSheet({ set: 'ตั้ง PIN', change: 'เปลี่ยน PIN', disable: 'ปิดการล็อกด้วย PIN' }[mode], '<div id="pin-setup"></div>');
+      startPinFlow(mode, $('#pin-setup'));
+      break;
+    }
+    case 'pin-forgot':
+      if (!confirm('ออกจากระบบเพื่อตั้ง PIN ใหม่?\n(ล็อกอินด้วยชื่อผู้ใช้และรหัสผ่านอีกครั้ง)')) return;
+      clearPin();
+      lockDialog.close();
+      await signOut(auth);
+      break;
     case 'update-app': {
       toast('กำลังโหลดเวอร์ชันล่าสุด…');
       try {
@@ -1453,5 +1640,23 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.matches('.item[role=button]')) e.target.click();
 });
 
-// ตอนเปิดแอปค้างไว้ข้ามวัน ให้ "วันนี้" อัปเดต
-document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+// ตอนเปิดแอปค้างไว้ข้ามวัน ให้ "วันนี้" อัปเดต + จำเวลาที่ออกจากแอปไว้สำหรับล็อก PIN
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (!lockDialog.open) store('lastHidden', String(Date.now()));
+    return;
+  }
+  render();
+  maybeLock();
+});
+
+document.addEventListener('click', (e) => {
+  const key = e.target.closest('[data-pin-key]');
+  if (key) pressPinKey(key.dataset.pinKey);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (!pinFlow || !pinFlow.root.isConnected) return;
+  if (/^\d$/.test(e.key)) pressPinKey(e.key);
+  else if (e.key === 'Backspace') pressPinKey('del');
+});

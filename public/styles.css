@@ -135,7 +135,42 @@ button.settings-row:active { background: var(--primary-soft); }
 .settings-end { flex: none; display: flex; align-items: center; gap: 8px; max-width: 45%; }
 .settings-end .error { font-size: 12px; }
 .status-on { color: var(--done); font-weight: 600; font-size: 14px; white-space: nowrap; }
+.settings-sub { display: flex; gap: 8px; padding: 0 14px 12px 62px; }
 .danger-group { margin-top: 18px; }
+
+/* PIN */
+.lock {
+  width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0;
+  background: var(--grad); color: #fff;
+}
+.lock::backdrop { background: #0b1a6e; }
+.lock-inner {
+  min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 24px 16px calc(24px + var(--safe-bottom));
+}
+.lock-inner img { border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.lock-forgot { margin-top: 18px; border: 0; background: none; color: rgba(255,255,255,.8); font-size: 14px; text-decoration: underline; cursor: pointer; padding: 8px; }
+.pinpad { width: 100%; max-width: 300px; margin: 0 auto; text-align: center; }
+.pin-title { margin: 8px 0 2px; font-size: 20px; }
+.pin-msg { min-height: 22px; margin: 0 0 14px; font-size: 14px; opacity: .85; }
+.lock .pin-msg.error { color: #ffd1d3; opacity: 1; }
+.pin-dots { display: flex; justify-content: center; gap: 18px; margin-bottom: 28px; }
+.pin-dots i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor; transition: background .1s ease; }
+.pin-dots i.on { background: currentColor; }
+.pin-dots.shake { animation: pin-shake .35s ease; }
+@keyframes pin-shake { 20%, 60% { transform: translateX(-10px); } 40%, 80% { transform: translateX(10px); } }
+.keypad { display: grid; grid-template-columns: repeat(3, 72px); justify-content: center; gap: 16px 26px; }
+.keypad button {
+  width: 72px; height: 72px; border-radius: 50%; border: 0; cursor: pointer;
+  font-size: 28px; font-weight: 500; color: inherit; background: rgba(255,255,255,.14);
+}
+.keypad button:active { background: rgba(255,255,255,.32); }
+.keypad button[data-pin-key="del"] { background: transparent; font-size: 24px; }
+/* keypad ในหน้าตั้งค่า (พื้นขาว) */
+.sheet .pinpad { color: var(--primary-dark); padding: 6px 0 10px; }
+.sheet .keypad button { background: var(--primary-soft); }
+.sheet .keypad button:active { background: #cdd9ff; }
+.sheet .keypad button[data-pin-key="del"] { background: transparent; }
 .danger-group strong { color: var(--danger); }
 .topbar-actions .btn { background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.25); color: #fff; min-height: 36px; box-shadow: none; }
 .view { max-width: 760px; margin: 0 auto; padding: 16px; }
