@@ -29,7 +29,7 @@ const CUSTOMER_STATUS = {
   not_interested: 'ไม่สนใจ',
 };
 const APPT_STATUS = { pending: 'รอพบ', done: 'เสร็จแล้ว', cancelled: 'ยกเลิก' };
-const APP_VERSION = '1.9'; // เปลี่ยนพร้อม CACHE ใน firebase-messaging-sw.js
+const APP_VERSION = '2.0'; // เปลี่ยนพร้อม CACHE ใน firebase-messaging-sw.js
 const WALK_IN = 'ลูกค้าวอล์กอินสำนักงาน';
 const OTHER_TOPIC = 'อื่นๆ';
 const TOPICS = ['เสนอแบบประกัน', 'เซ็นสัญญา', 'เก็บเบี้ย', 'ติดตาม', WALK_IN, OTHER_TOPIC];
@@ -309,6 +309,7 @@ onAuthStateChanged(auth, (user) => {
   $('#login').hidden = true;
   $('#app').hidden = false;
   maybeLock();
+  setTimeout(offerPinSetup, 800);
   subscribeData();
   applyUrlParams();
   render();
@@ -1408,6 +1409,20 @@ function maybeLock() {
   if (Date.now() - last > LOCK_AFTER_MS) lockApp();
 }
 
+// หลังล็อกอิน: ชวนตั้ง PIN ครั้งเดียวต่อเครื่อง/บัญชี (กด "ไว้ทีหลัง" แล้วไม่ถามซ้ำ)
+function offerPinSetup() {
+  if (!auth.currentUser || hasPin() || store(pinKey('Offered')) || sheet.open || lockDialog.open) return;
+  openSheet('ล็อกแอปด้วย PIN', `
+    <div class="pin-offer">
+      <div class="pin-offer-icon">🔒</div>
+      <p>ตั้ง PIN ${PIN_LENGTH} หลัก เพื่อกันคนอื่นเปิดดูข้อมูลลูกค้าในมือถือเครื่องนี้<br>
+      <small>แอปจะถาม PIN เมื่อออกจากแอปเกิน 5 นาที</small></p>
+      <button type="button" class="btn primary block" data-action="pin-set">ตั้ง PIN เลย</button>
+      <button type="button" class="btn ghost block" data-action="pin-later">ไว้ทีหลัง</button>
+      <p class="hint">ตั้งหรือปิดได้ภายหลังที่ ⚙️ ตั้งค่า</p>
+    </div>`);
+}
+
 lockDialog.addEventListener('cancel', (e) => e.preventDefault()); // ปุ่มย้อนกลับ/Esc ปิดหน้าล็อกไม่ได้
 
 /* ====================================================================
@@ -1546,9 +1561,15 @@ async function handleAction(el, e) {
       break;
     case 'logout-now': await signOut(auth); break;
     case 'open-settings': openSettings(); break;
+    case 'pin-later':
+      store(pinKey('Offered'), '1');
+      closeSheet();
+      toast('ตั้ง PIN ได้ภายหลังที่ ⚙️ ตั้งค่า');
+      break;
     case 'pin-set':
     case 'pin-change':
     case 'pin-disable': {
+      store(pinKey('Offered'), '1');
       const mode = action.slice(4);
       openSheet({ set: 'ตั้ง PIN', change: 'เปลี่ยน PIN', disable: 'ปิดการล็อกด้วย PIN' }[mode], '<div id="pin-setup"></div>');
       startPinFlow(mode, $('#pin-setup'));

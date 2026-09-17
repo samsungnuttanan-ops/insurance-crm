@@ -139,6 +139,10 @@ button.settings-row:active { background: var(--primary-soft); }
 .danger-group { margin-top: 18px; }
 
 /* PIN */
+.pin-offer { display: grid; gap: 10px; text-align: center; padding: 4px 0 6px; }
+.pin-offer-icon { width: 64px; height: 64px; margin: 0 auto 4px; border-radius: 20px; background: var(--primary-soft); display: grid; place-items: center; font-size: 30px; }
+.pin-offer p { margin: 0 0 6px; }
+.pin-offer small { color: var(--muted); }
 .lock {
   width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0;
   background: var(--grad); color: #fff;
