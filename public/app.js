@@ -29,7 +29,7 @@ const CUSTOMER_STATUS = {
   not_interested: 'ไม่สนใจ',
 };
 const APPT_STATUS = { pending: 'รอพบ', done: 'เสร็จแล้ว', cancelled: 'ยกเลิก' };
-const APP_VERSION = '2.0'; // เปลี่ยนพร้อม CACHE ใน firebase-messaging-sw.js
+const APP_VERSION = '2.1'; // เปลี่ยนพร้อม CACHE ใน firebase-messaging-sw.js
 const WALK_IN = 'ลูกค้าวอล์กอินสำนักงาน';
 const OTHER_TOPIC = 'อื่นๆ';
 const TOPICS = ['เสนอแบบประกัน', 'เซ็นสัญญา', 'เก็บเบี้ย', 'ติดตาม', WALK_IN, OTHER_TOPIC];
@@ -978,6 +978,7 @@ function openApptForm(appt = null, preset = {}) {
         </div>
         <div id="cust-new" class="form-grid" ${mode === 'new' ? '' : 'hidden'} style="margin-top:8px">
           ${customerFields({}, 'new_')}
+          <div id="dup-phone" class="dup-phone" hidden></div>
         </div>
       </div>
 
@@ -1020,6 +1021,24 @@ function renderPicker(q) {
     </button>`).join('') || `<div class="empty">ไม่พบลูกค้า — กด "ลูกค้าใหม่" ด้านบนเพื่อเพิ่ม</div>`;
 }
 
+// หาลูกค้าที่เบอร์ตรงกัน (เทียบเฉพาะตัวเลข เช่น 081-234-5678 = 0812345678)
+function findCustomerByPhone(phone, excludeId = '') {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length < 9) return null;
+  return [...state.customers.values()].find((c) => c.id !== excludeId && (c.phone || '').replace(/\D/g, '') === digits) || null;
+}
+
+function showDupPhoneWarning(phone) {
+  const box = $('#dup-phone');
+  if (!box) return;
+  const dup = findCustomerByPhone(phone);
+  box.hidden = !dup;
+  if (!dup) return;
+  box.innerHTML = `
+    <span>⚠️ เบอร์นี้มีในคลังลูกค้าแล้ว: <strong>${esc(dup.name)}</strong></span>
+    <button type="button" class="btn small primary" data-action="use-existing" data-id="${dup.id}">ใช้ลูกค้าคนนี้</button>`;
+}
+
 function readCustomerFields(form, prefix = '') {
   const v = (n) => (form.elements[prefix + n]?.value || '').trim();
   const age = v('age');
@@ -1050,6 +1069,8 @@ async function saveAppt(form) {
   if (f.custMode.value === 'new') {
     newCustomer = readCustomerFields(form, 'new_');
     if (!newCustomer.name || !newCustomer.phone) return show('กรุณากรอกชื่อและเบอร์โทรของลูกค้าใหม่');
+    const dup = findCustomerByPhone(newCustomer.phone);
+    if (dup && !confirm(`เบอร์ ${newCustomer.phone} มีในคลังลูกค้าแล้ว (${dup.name})\n\nกด "ตกลง" = สร้างลูกค้าใหม่ซ้ำอีกคน\nกด "ยกเลิก" = กลับไปแก้ (แนะนำกด "ใช้ลูกค้าคนนี้")`)) return;
   } else if (!f.customerId.value) {
     return show('กรุณาเลือกลูกค้า');
   }
@@ -1185,9 +1206,8 @@ async function saveCustomer(form) {
   if (data.premiumStartDate && !data.premiumFrequency) return show('กรุณาเลือกงวดชำระ');
 
   const id = form.dataset.id;
-  const dup = [...state.customers.values()].find((c) => c.id !== id
-    && (c.phone || '').replace(/\D/g, '') === data.phone.replace(/\D/g, ''));
-  if (dup && !confirm(`เบอร์นี้มีอยู่แล้ว (${dup.name}) ต้องการบันทึกต่อหรือไม่?`)) return;
+  const dup = findCustomerByPhone(data.phone, id);
+  if (dup &&!confirm(`เบอร์นี้มีอยู่แล้ว (${dup.name}) ต้องการบันทึกต่อหรือไม่?`)) return;
 
   if (id) {
     write(updateDoc(doc(db, 'customers', id), { ...data, updatedAt: serverTimestamp() }));
@@ -1508,6 +1528,21 @@ async function handleAction(el, e) {
       $('#picker').hidden = true;
       break;
     }
+    case 'use-existing': {
+      // สลับไป "ลูกค้าในระบบ" แล้วเลือกคนที่เบอร์ตรงให้เลย
+      const form = $('#appt-form');
+      const c = state.customers.get(id);
+      form.elements.custMode.value = 'existing';
+      form.querySelectorAll('.switch2 button').forEach((b) => b.classList.toggle('active', b.dataset.v === 'existing'));
+      $('#cust-new').hidden = true;
+      $('#cust-existing').hidden = false;
+      form.elements.customerId.value = id;
+      $('#picked').querySelector('span').innerHTML = `<strong>${esc(c.name)}</strong><br>${telLink(c.phone)}`;
+      $('#picked').hidden = false;
+      $('#picker').hidden = true;
+      toast(`เลือก ${c.name} จากคลังลูกค้าแล้ว`);
+      break;
+    }
     case 'unpick':
       $('#appt-form').elements.customerId.value = '';
       $('#picked').hidden = true;
@@ -1627,6 +1662,8 @@ document.addEventListener('input', (e) => {
     $('#cust-results').innerHTML = renderCustomerList();
   } else if (e.target.id === 'picker-q') {
     renderPicker(e.target.value);
+  } else if (e.target.name === 'new_phone') {
+    showDupPhoneWarning(e.target.value);
   }
 });
 

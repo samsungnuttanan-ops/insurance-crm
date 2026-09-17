@@ -405,6 +405,10 @@ button.settings-row:active { background: var(--primary-soft); }
 .picker-results button:last-child { border-bottom: 0; }
 .picked { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--primary-soft); border: 1px solid #cdd9ff; border-radius: 12px; padding: 10px 14px; margin-top: 6px; }
 
+.dup-phone {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  background: #fff8ec; border: 1px solid #ffe0ae; color: #7a4a00; border-radius: 12px; padding: 10px 12px; font-size: 14px;
+}
 .status-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 6px; }
 .status-row button { border: 1.5px solid var(--line); background: #fff; border-radius: 12px; padding: 9px 4px; font-weight: 600; cursor: pointer; font-size: 14px; }
 .status-row button.active[data-v="pending"] { background: var(--appt-soft); color: var(--appt); border-color: var(--appt); }
