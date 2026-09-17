@@ -56,7 +56,7 @@ const entries = [
   ...appts.map((a) => {
     const who = names.get(a.customerId) || a.customerName || 'ลูกค้า';
     const where = a.location ? ` @ ${a.location}` : '';
-    return { time: a.time || '', text: `${a.time || '--:--'} 👤 ${who} – ${a.topic || 'นัดหมาย'}${where}` };
+    return { time: a.time || '', text: `${a.time || 'ทั้งวัน'} 👤 ${who} – ${a.topic || 'นัดหมาย'}${where}` };
   }),
   ...tasks.map((t) => {
     const where = t.location ? ` @ ${t.location}` : '';

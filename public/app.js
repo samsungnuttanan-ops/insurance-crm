@@ -29,7 +29,7 @@ const CUSTOMER_STATUS = {
   not_interested: 'ไม่สนใจ',
 };
 const APPT_STATUS = { pending: 'รอพบ', done: 'เสร็จแล้ว', cancelled: 'ยกเลิก' };
-const APP_VERSION = '2.1'; // เปลี่ยนพร้อม CACHE ใน firebase-messaging-sw.js
+const APP_VERSION = '2.2'; // เปลี่ยนพร้อม CACHE ใน firebase-messaging-sw.js
 const WALK_IN = 'ลูกค้าวอล์กอินสำนักงาน';
 const OTHER_TOPIC = 'อื่นๆ';
 const TOPICS = ['เสนอแบบประกัน', 'เซ็นสัญญา', 'เก็บเบี้ย', 'ติดตาม', WALK_IN, OTHER_TOPIC];
@@ -84,6 +84,26 @@ function addMonthsClamped(s, months) {
   target.setDate(Math.min(d, dim));
   return ymd(target);
 }
+// เวลาแบบพิมพ์เอง: รับ "10", "930", "1030", "10:30", "10.30", "10.30 น." → "HH:MM"
+// คืน '' ถ้าเว้นว่าง, null ถ้ารูปแบบไม่ถูกต้อง
+const TIME_FORMAT_ERROR = 'เวลาไม่ถูกต้อง ลองพิมพ์แบบ 1030 หรือ 10:30';
+function normalizeTime(raw) {
+  const v = String(raw || '').replace(/น\.?/g, '').replace(/\s/g, '').replace(/[.,;]/g, ':');
+  if (!v) return '';
+  let m = v.match(/^(\d{1,2})$/);
+  let h;
+  let min;
+  if (m) { h = Number(m[1]); min = 0; }
+  else if ((m = v.match(/^(\d{1,2}):(\d{2})$/))) { h = Number(m[1]); min = Number(m[2]); }
+  else if ((m = v.match(/^(\d{1,2})(\d{2})$/))) { h = Number(m[1]); min = Number(m[2]); }
+  else return null;
+  return h <= 23 && min <= 59 ? `${pad(h)}:${pad(min)}` : null;
+}
+function timeInputHtml(name, value) {
+  return `<input name="${name}" class="time-input" type="text" inputmode="numeric" autocomplete="off" maxlength="8"
+    value="${esc(value)}" placeholder="เช่น 1030 (เว้นว่างได้)">`;
+}
+
 function startOfWeek(s) { const d = parse(s); d.setDate(d.getDate() - d.getDay()); return ymd(d); }
 function toMinutes(t) { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + m; }
 
@@ -427,7 +447,7 @@ function renderEvent(e, { conflicts = new Set(), showDate = false } = {}) {
     const sub = [a.topic, showDate ? dateLabel : '', a.location].filter(Boolean).join(' · ');
     return `
       <div class="item ${a.status} ${conflicts.has(a.id) ? 'conflict' : ''}" data-action="edit-appt" data-id="${a.id}" role="button" tabindex="0">
-        <span class="time">${esc(a.time || '--:--')}</span>
+        <span class="time">${esc(a.time || 'ทั้งวัน')}</span>
         <span class="body">
           <span class="title">${esc(customerName(a))}</span>
           ${a.status !== 'pending' ? `<span class="tag a-${a.status}">${APPT_STATUS[a.status]}</span>` : ''}
@@ -749,7 +769,7 @@ function openTaskForm(task = null, preset = {}) {
       <label>ต้องทำอะไร <span class="req">*</span><input name="title" value="${esc(x.title)}" placeholder="${placeholders[type]}"></label>
       <div class="field-row">
         <label>วันที่<input name="dueDate" type="date" value="${esc(x.dueDate)}"></label>
-        <label>เวลา<input name="dueTime" type="time" value="${esc(x.dueTime)}"></label>
+        <label>เวลา${timeInputHtml('dueTime', x.dueTime)}</label>
       </div>
       <label>สถานที่<input name="location" value="${esc(x.location)}" placeholder="เช่น สำนักงานสาขา / ธนาคารกรุงเทพ สีลม"></label>
       <label>โน้ต / รายละเอียด<textarea name="notes" rows="3" placeholder="จดรายละเอียดเพิ่มเติม">${esc(x.notes)}</textarea></label>
@@ -779,10 +799,11 @@ function saveTask(form) {
     type: f.type.value,
     location: f.location.value.trim(),
     dueDate: f.dueDate.value,
-    dueTime: f.dueDate.value ? f.dueTime.value : '',
+    dueTime: f.dueDate.value ? normalizeTime(f.dueTime.value) : '',
     customerId: f.customerId.value,
   };
   if (!data.title) { errEl.textContent = 'กรุณาพิมพ์ว่าต้องทำอะไร'; errEl.hidden = false; f.title.focus(); return; }
+  if (data.dueTime === null) { errEl.textContent = TIME_FORMAT_ERROR; errEl.hidden = false; f.dueTime.focus(); return; }
   const id = form.dataset.id;
   const done = id ? f.done.checked : false;
   if (!done && data.dueDate && data.dueTime && !confirmNoClash(data.dueDate, data.dueTime, id)) return;
@@ -984,7 +1005,7 @@ function openApptForm(appt = null, preset = {}) {
 
       <div class="field-row">
         <label>วันที่ <span class="req">*</span><input name="date" type="date" value="${esc(a.date)}" required></label>
-        <label>เวลา <span class="req">*</span><input name="time" type="time" value="${esc(a.time)}" required></label>
+        <label>เวลา${timeInputHtml('time', a.time)}</label>
       </div>
       <label>เรื่อง
         <select name="topic">${TOPICS.map((t) => `<option ${topicChoice === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
@@ -1059,7 +1080,7 @@ async function saveAppt(form) {
   const id = form.dataset.id;
   const data = {
     date: f.date.value,
-    time: f.time.value,
+    time: normalizeTime(f.time.value),
     topic: f.topic.value === OTHER_TOPIC ? f.topicOther.value.trim() : f.topic.value,
     location: f.location.value.trim(),
     notes: f.notes.value.trim(),
@@ -1074,10 +1095,11 @@ async function saveAppt(form) {
   } else if (!f.customerId.value) {
     return show('กรุณาเลือกลูกค้า');
   }
-  if (!data.date || !data.time) return show('กรุณาเลือกวันที่และเวลา');
+  if (!data.date) return show('กรุณาเลือกวันที่');
+  if (data.time === null) { f.time.focus(); return show(TIME_FORMAT_ERROR); }
   if (!data.topic) { f.topicOther.focus(); return show('กรุณาพิมพ์เรื่องที่นัด'); }
 
-  if (data.status === 'pending' && !confirmNoClash(data.date, data.time, id)) return;
+  if (data.status === 'pending' && data.time && !confirmNoClash(data.date, data.time, id)) return;
 
   if (newCustomer) {
     const ref = doc(collection(db, 'customers'));
@@ -1665,6 +1687,14 @@ document.addEventListener('input', (e) => {
   } else if (e.target.name === 'new_phone') {
     showDupPhoneWarning(e.target.value);
   }
+});
+
+// พิมพ์เวลาเสร็จ (ออกจากช่อง) → จัดรูปแบบเป็น 10:30 ให้เห็นชัด
+document.addEventListener('focusout', (e) => {
+  if (!e.target.classList?.contains('time-input')) return;
+  const t = normalizeTime(e.target.value);
+  e.target.classList.toggle('invalid', t === null);
+  if (t) e.target.value = t;
 });
 
 document.addEventListener('change', (e) => {

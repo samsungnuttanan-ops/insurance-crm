@@ -405,6 +405,8 @@ button.settings-row:active { background: var(--primary-soft); }
 .picker-results button:last-child { border-bottom: 0; }
 .picked { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--primary-soft); border: 1px solid #cdd9ff; border-radius: 12px; padding: 10px 14px; margin-top: 6px; }
 
+.time-input { font-variant-numeric: tabular-nums; letter-spacing: .5px; }
+.time-input.invalid { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
 .dup-phone {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
   background: #fff8ec; border: 1px solid #ffe0ae; color: #7a4a00; border-radius: 12px; padding: 10px 12px; font-size: 14px;
